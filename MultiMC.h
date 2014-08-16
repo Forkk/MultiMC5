@@ -1,8 +1,6 @@
 #pragma once
 
-#include "config.h"
 #include <QApplication>
-#include "MultiMCVersion.h"
 #include <memory>
 #include "logger/QsLog.h"
 #include "logger/QsLogDest.h"
@@ -17,24 +15,20 @@ class MojangAccountList;
 class IconList;
 class QNetworkAccessManager;
 class ForgeVersionList;
+class LiteLoaderVersionList;
 class JavaVersionList;
 class UpdateChecker;
 class NotificationChecker;
 class NewsChecker;
+class StatusChecker;
+class BaseProfilerFactory;
+class BaseDetachedToolFactory;
+class URNResolver;
 
 #if defined(MMC)
 #undef MMC
 #endif
 #define MMC (static_cast<MultiMC *>(QCoreApplication::instance()))
-
-// FIXME: possibly move elsewhere
-enum InstSortMode
-{
-	// Sort alphabetically by name.
-	Sort_Name,
-	// Sort by which instance was launched most recently.
-	Sort_LastLaunch
-};
 
 enum UpdateFlag
 {
@@ -45,6 +39,9 @@ enum UpdateFlag
 };
 Q_DECLARE_FLAGS(UpdateFlags, UpdateFlag);
 Q_DECLARE_OPERATORS_FOR_FLAGS(UpdateFlags);
+
+// Global var used by the crash handling system to determine if a log file should be included in a crash report.
+extern bool loggerInitialized;
 
 class MultiMC : public QApplication
 {
@@ -83,11 +80,6 @@ public:
 		return m_status;
 	}
 
-	MultiMCVersion version()
-	{
-		return m_version;
-	}
-
 	std::shared_ptr<QNetworkAccessManager> qnam()
 	{
 		return m_qnam;
@@ -113,15 +105,38 @@ public:
 		return m_newsChecker;
 	}
 
+	std::shared_ptr<StatusChecker> statusChecker()
+	{
+		return m_statusChecker;
+	}
+
 	std::shared_ptr<LWJGLVersionList> lwjgllist();
 
 	std::shared_ptr<ForgeVersionList> forgelist();
+
+	std::shared_ptr<LiteLoaderVersionList> liteloaderlist();
 
 	std::shared_ptr<MinecraftVersionList> minecraftlist();
 
 	std::shared_ptr<JavaVersionList> javalist();
 
+	std::shared_ptr<URNResolver> resolver();
+
+	QMap<QString, std::shared_ptr<BaseProfilerFactory>> profilers()
+	{
+		return m_profilers;
+	}
+	QMap<QString, std::shared_ptr<BaseDetachedToolFactory>> tools()
+	{
+		return m_tools;
+	}
+
 	void installUpdates(const QString updateFilesDir, UpdateFlags flags = None);
+
+	/*!
+	 * Updates the application proxy settings from the settings object.
+	 */
+	void updateProxySettings();
 
 	/*!
 	 * Opens a json file using either a system default editor, or, if note empty, the editor
@@ -129,6 +144,11 @@ public:
 	 */
 	bool openJsonEditor(const QString &filename);
 
+	/// this is the static data. it stores things that don't move.
+	const QString &staticData()
+	{
+		return staticDataPath;
+	}
 	/// this is the root of the 'installation'. Used for automatic updates
 	const QString &root()
 	{
@@ -178,14 +198,21 @@ private:
 	std::shared_ptr<UpdateChecker> m_updateChecker;
 	std::shared_ptr<NotificationChecker> m_notificationChecker;
 	std::shared_ptr<NewsChecker> m_newsChecker;
+	std::shared_ptr<StatusChecker> m_statusChecker;
 	std::shared_ptr<MojangAccountList> m_accounts;
 	std::shared_ptr<IconList> m_icons;
 	std::shared_ptr<QNetworkAccessManager> m_qnam;
 	std::shared_ptr<HttpMetaCache> m_metacache;
 	std::shared_ptr<LWJGLVersionList> m_lwjgllist;
 	std::shared_ptr<ForgeVersionList> m_forgelist;
+	std::shared_ptr<LiteLoaderVersionList> m_liteloaderlist;
 	std::shared_ptr<MinecraftVersionList> m_minecraftlist;
 	std::shared_ptr<JavaVersionList> m_javalist;
+	std::shared_ptr<URNResolver> m_resolver;
+
+	QMap<QString, std::shared_ptr<BaseProfilerFactory>> m_profilers;
+	QMap<QString, std::shared_ptr<BaseDetachedToolFactory>> m_tools;
+
 	QsLogging::DestinationPtr m_fileDestination;
 	QsLogging::DestinationPtr m_debugDestination;
 
@@ -193,10 +220,10 @@ private:
 	UpdateFlags m_updateOnExitFlags = None;
 
 	QString rootPath;
+	QString staticDataPath;
 	QString binPath;
 	QString dataPath;
 	QString origcwdPath;
 
 	Status m_status = MultiMC::Failed;
-	MultiMCVersion m_version;
 };

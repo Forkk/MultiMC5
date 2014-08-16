@@ -16,7 +16,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QImage>
-#include <setting.h>
+#include <logic/settings/Setting.h>
 #include <pathutils.h>
 #include <cmdutils.h>
 
@@ -28,10 +28,13 @@
 #include "logic/MinecraftProcess.h"
 #include "logic/LegacyUpdate.h"
 #include "logic/icons/IconList.h"
-
-#include "gui/dialogs/LegacyModEditDialog.h"
-
-#define LAUNCHER_FILE "MultiMCLauncher.jar"
+#include "gui/pages/LegacyUpgradePage.h"
+#include "gui/pages/ModFolderPage.h"
+#include "gui/pages/LegacyJarModPage.h"
+#include <gui/pages/TexturePackPage.h>
+#include <gui/pages/InstanceSettingsPage.h>
+#include <gui/pages/NotesPage.h>
+#include <gui/pages/ScreenshotsPage.h>
 
 LegacyInstance::LegacyInstance(const QString &rootDir, SettingsObject *settings,
 							   QObject *parent)
@@ -44,79 +47,63 @@ LegacyInstance::LegacyInstance(const QString &rootDir, SettingsObject *settings,
 	settings->registerSetting("IntendedJarVersion", "");
 }
 
-std::shared_ptr<Task> LegacyInstance::doUpdate(bool only_prepare)
+QList<BasePage *> LegacyInstance::getPages()
+{
+	QList<BasePage *> values;
+	// FIXME: actually implement the legacy instance upgrade, then enable this.
+	//values.append(new LegacyUpgradePage(this));
+	values.append(new LegacyJarModPage(this));
+	values.append(new ModFolderPage(this, loaderModList(), "mods", "plugin-blue", tr("Loader mods"),
+									"Loader-mods"));
+	values.append(new ModFolderPage(this, coreModList(), "coremods", "plugin-green", tr("Core mods"),
+									"Core-mods"));
+	values.append(new TexturePackPage(this));
+	values.append(new NotesPage(this));
+	values.append(new ScreenshotsPage(this));
+	values.append(new InstanceSettingsPage(this));
+	return values;
+}
+
+QString LegacyInstance::dialogTitle()
+{
+	return tr("Edit Instance (%1)").arg(name());
+}
+
+std::shared_ptr<Task> LegacyInstance::doUpdate()
 {
 	// make sure the jar mods list is initialized by asking for it.
 	auto list = jarModList();
 	// create an update task
-	return std::shared_ptr<Task> (new LegacyUpdate(this, only_prepare , this));
+	return std::shared_ptr<Task>(new LegacyUpdate(this, this));
 }
 
-MinecraftProcess *LegacyInstance::prepareForLaunch(MojangAccountPtr account)
+bool LegacyInstance::prepareForLaunch(AuthSessionPtr account, QString &launchScript)
 {
-	MinecraftProcess *proc = new MinecraftProcess(this);
-
 	QIcon icon = MMC->icons()->getIcon(iconKey());
 	auto pixmap = icon.pixmap(128, 128);
 	pixmap.save(PathCombine(minecraftRoot(), "icon.png"), "PNG");
 
-	// extract the legacy launcher
-	QFile(":/java/launcher.jar").copy(PathCombine(minecraftRoot(), LAUNCHER_FILE));
-
-	// set the process arguments
+	// create the launch script
 	{
-		QStringList args;
-
 		// window size
-		QString windowSize;
+		QString windowParams;
 		if (settings().get("LaunchMaximized").toBool())
-			windowSize = "max";
+			windowParams = "max";
 		else
-			windowSize = QString("%1x%2").arg(settings().get("MinecraftWinWidth").toInt()).arg(
-				settings().get("MinecraftWinHeight").toInt());
-
-		// window title
-		QString windowTitle;
-		windowTitle.append("MultiMC: ").append(name());
-
-		// Java arguments
-		args.append(Util::Commandline::splitArgs(settings().get("JvmArgs").toString()));
-
-#ifdef OSX
-		// OSX dock icon and name
-		args << "-Xdock:icon=icon.png";
-		args << QString("-Xdock:name=\"%1\"").arg(windowTitle);
-#endif
+			windowParams = QString("%1x%2")
+							   .arg(settings().get("MinecraftWinWidth").toInt())
+							   .arg(settings().get("MinecraftWinHeight").toInt());
 
 		QString lwjgl = QDir(MMC->settings()->get("LWJGLDir").toString() + "/" + lwjglVersion())
 							.absolutePath();
-
-		// launcher arguments
-		args << QString("-Xms%1m").arg(settings().get("MinMemAlloc").toInt());
-		args << QString("-Xmx%1m").arg(settings().get("MaxMemAlloc").toInt());
-		args << QString("-XX:PermSize=%1m").arg(settings().get("PermGen").toInt());
-/**
-* HACK: Stupid hack for Intel drivers.
-* See: https://mojang.atlassian.net/browse/MCL-767
-*/
-#ifdef Q_OS_WIN32
-		args << QString("-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_"
-						"minecraft.exe.heapdump");
-#endif
-
-		args << "-jar" << LAUNCHER_FILE;
-		args << account->currentProfile()->name;
-		args << account->sessionId();
-		args << windowTitle;
-		args << windowSize;
-		args << lwjgl;
-		proc->setArguments(args);
+		launchScript += "userName " + account->player_name + "\n";
+		launchScript += "sessionId " + account->session + "\n";
+		launchScript += "windowTitle " + windowTitle() + "\n";
+		launchScript += "windowParams " + windowParams + "\n";
+		launchScript += "lwjgl " + lwjgl + "\n";
+		launchScript += "launcher legacy\n";
 	}
-
-	// set the process work path
-	proc->setWorkdir(minecraftRoot());
-
-	return proc;
+	return true;
 }
 
 void LegacyInstance::cleanupAfterRun()
@@ -176,11 +163,6 @@ std::shared_ptr<ModList> LegacyInstance::texturePackList()
 	return d->texture_pack_list;
 }
 
-QDialog *LegacyInstance::createModEditDialog(QWidget *parent)
-{
-	return new LegacyModEditDialog(this, parent);
-}
-
 QString LegacyInstance::jarModsDir() const
 {
 	return PathCombine(instanceRoot(), "instMods");
@@ -189,6 +171,11 @@ QString LegacyInstance::jarModsDir() const
 QString LegacyInstance::binDir() const
 {
 	return PathCombine(minecraftRoot(), "bin");
+}
+
+QString LegacyInstance::libDir() const
+{
+	return PathCombine(minecraftRoot(), "lib");
 }
 
 QString LegacyInstance::savesDir() const
@@ -298,17 +285,11 @@ QString LegacyInstance::defaultCustomBaseJar() const
 	return PathCombine(binDir(), "mcbackup.jar");
 }
 
-bool LegacyInstance::menuActionEnabled(QString action_name) const
-{
-	if (action_name == "actionChangeInstMCVersion")
-		return false;
-	return true;
-}
-
 QString LegacyInstance::getStatusbarDescription()
 {
-	if (shouldUpdate())
-		return "Legacy : " + currentVersionId() + " -> " + intendedVersionId();
-	else
-		return "Legacy : " + currentVersionId();
+	if (flags().contains(VersionBrokenFlag))
+	{
+		return tr("Legacy : %1 (broken)").arg(intendedVersionId());
+	}
+	return tr("Legacy : %1").arg(intendedVersionId());
 }

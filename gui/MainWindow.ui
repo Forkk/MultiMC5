@@ -6,15 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>688</width>
-    <height>460</height>
+    <width>694</width>
+    <height>563</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>MultiMC 5</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="../graphics.qrc">
+   <iconset resource="../resources/multimc/multimc.qrc">
     <normaloff>:/icons/multimc/scalable/apps/multimc.svg</normaloff>:/icons/multimc/scalable/apps/multimc.svg</iconset>
   </property>
   <widget class="QWidget" name="centralWidget">
@@ -74,6 +74,7 @@
    <addaction name="actionReportBug"/>
    <addaction name="actionAbout"/>
    <addaction name="separator"/>
+   <addaction name="actionPatreon"/>
    <addaction name="actionCAT"/>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
@@ -107,14 +108,14 @@
    </attribute>
    <addaction name="actionChangeInstIcon"/>
    <addaction name="actionLaunchInstance"/>
-   <addaction name="separator"/>
-   <addaction name="actionEditInstNotes"/>
+   <addaction name="actionLaunchInstanceOffline"/>
    <addaction name="actionChangeInstGroup"/>
    <addaction name="separator"/>
+   <addaction name="actionEditInstance"/>
    <addaction name="actionInstanceSettings"/>
-   <addaction name="actionChangeInstMCVersion"/>
-   <addaction name="actionChangeInstLWJGLVersion"/>
-   <addaction name="actionEditInstMods"/>
+   <addaction name="actionEditInstNotes"/>
+   <addaction name="actionScreenshots"/>
+   <addaction name="separator"/>
    <addaction name="actionViewSelectedInstFolder"/>
    <addaction name="actionConfig_Folder"/>
    <addaction name="separator"/>
@@ -152,8 +153,9 @@
   </widget>
   <action name="actionAddInstance">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/new</normaloff>:/icons/toolbar/new</iconset>
+    <iconset theme="new">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Add Instance</string>
@@ -167,8 +169,9 @@
   </action>
   <action name="actionViewInstanceFolder">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/viewfolder</normaloff>:/icons/toolbar/viewfolder</iconset>
+    <iconset theme="viewfolder">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>View Instance Folder</string>
@@ -182,8 +185,9 @@
   </action>
   <action name="actionRefresh">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/refresh</normaloff>:/icons/toolbar/refresh</iconset>
+    <iconset theme="refresh">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Refresh</string>
@@ -197,8 +201,9 @@
   </action>
   <action name="actionViewCentralModsFolder">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/centralmods</normaloff>:/icons/toolbar/centralmods</iconset>
+    <iconset theme="centralmods">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>View Central Mods Folder</string>
@@ -212,8 +217,9 @@
   </action>
   <action name="actionCheckUpdate">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/checkupdate</normaloff>:/icons/toolbar/checkupdate</iconset>
+    <iconset theme="checkupdate">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Check for Updates</string>
@@ -227,8 +233,9 @@
   </action>
   <action name="actionSettings">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/settings</normaloff>:/icons/toolbar/settings</iconset>
+    <iconset theme="settings">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Settings</string>
@@ -245,8 +252,9 @@
   </action>
   <action name="actionReportBug">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/bug</normaloff>:/icons/toolbar/bug</iconset>
+    <iconset theme="bug">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Report a Bug</string>
@@ -258,10 +266,27 @@
     <string>Open the bug tracker to report a bug with MultiMC.</string>
    </property>
   </action>
+  <action name="actionPatreon">
+   <property name="icon">
+    <iconset theme="patreon">
+     <normaloff/>
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Support us on Patreon!</string>
+   </property>
+   <property name="toolTip">
+    <string>Open the MultiMC Patreon page.</string>
+   </property>
+   <property name="statusTip">
+    <string>Open the MultiMC Patreon page.</string>
+   </property>
+  </action>
   <action name="actionMoreNews">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/news</normaloff>:/icons/toolbar/news</iconset>
+    <iconset theme="news">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>More News</string>
@@ -278,8 +303,9 @@
   </action>
   <action name="actionAbout">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/about</normaloff>:/icons/toolbar/about</iconset>
+    <iconset theme="about">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>About MultiMC</string>
@@ -332,7 +358,7 @@
     <bool>true</bool>
    </property>
    <property name="icon">
-    <iconset resource="../graphics.qrc">
+    <iconset resource="../resources/instances/instances.qrc">
      <normaloff>:/icons/instances/infinity</normaloff>:/icons/instances/infinity</iconset>
    </property>
    <property name="text">
@@ -359,82 +385,18 @@
     <string>Edit the notes for the selected instance.</string>
    </property>
   </action>
-  <action name="actionInstanceSettings">
-   <property name="enabled">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Settings</string>
-   </property>
-   <property name="toolTip">
-    <string>Change settings for the selected instance.</string>
-   </property>
-   <property name="statusTip">
-    <string>Change settings for the selected instance.</string>
-   </property>
-  </action>
-  <action name="actionMakeDesktopShortcut">
-   <property name="enabled">
-    <bool>false</bool>
-   </property>
-   <property name="text">
-    <string>Make Shortcut</string>
-   </property>
-   <property name="toolTip">
-    <string>Make a shortcut on the desktop for the selected instance.</string>
-   </property>
-   <property name="statusTip">
-    <string>Make a shortcut on the desktop for the selected instance.</string>
-   </property>
-  </action>
-  <action name="actionManageInstSaves">
-   <property name="enabled">
-    <bool>false</bool>
-   </property>
-   <property name="text">
-    <string>Manage Saves</string>
-   </property>
-   <property name="toolTip">
-    <string>Manage saves for the selected instance.</string>
-   </property>
-   <property name="statusTip">
-    <string>Manage saves for the selected instance.</string>
-   </property>
-  </action>
-  <action name="actionEditInstMods">
+  <action name="actionEditInstance">
    <property name="text">
     <string>Edit Mods</string>
    </property>
-   <property name="toolTip">
-    <string>Edit the mods for the selected instance.</string>
-   </property>
-   <property name="statusTip">
-    <string>Edit the mods for the selected instance.</string>
-   </property>
-  </action>
-  <action name="actionChangeInstMCVersion">
-   <property name="text">
-    <string>Change Version</string>
+   <property name="iconText">
+    <string>Edit Instance</string>
    </property>
    <property name="toolTip">
-    <string>Change the selected instance's Minecraft version.</string>
+    <string>Change the instance settings, mods and versions.</string>
    </property>
    <property name="statusTip">
-    <string>Change the selected instance's Minecraft version.</string>
-   </property>
-  </action>
-  <action name="actionChangeInstLWJGLVersion">
-   <property name="enabled">
-    <bool>false</bool>
-   </property>
-   <property name="text">
-    <string>Change LWJGL</string>
-   </property>
-   <property name="toolTip">
-    <string>Change the version of LWJGL for the selected instance to use.</string>
-   </property>
-   <property name="statusTip">
-    <string>Change the version of LWJGL for the selected instance to use.</string>
+    <string>Change the instance settings, mods and versions.</string>
    </property>
   </action>
   <action name="actionViewSelectedInstFolder">
@@ -472,20 +434,22 @@
     <bool>true</bool>
    </property>
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/cat</normaloff>:/icons/toolbar/cat</iconset>
+    <iconset theme="cat">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Meow</string>
    </property>
    <property name="toolTip">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-weight:600; color:#ff0004;&quot;&gt;Catnarok!&lt;/span&gt;&lt;/p&gt;&lt;p align=&quot;center&quot;&gt;Or just a cat with a ball of yarn?&lt;/p&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-style:italic;&quot;&gt;WHO KNOWS?!&lt;/span&gt;&lt;/p&gt;&lt;p align=&quot;center&quot;&gt;&lt;img src=&quot;:/icons/instances/tnt&quot;/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;It's a fluffy kitty :3&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
   </action>
   <action name="actionCopyInstance">
    <property name="icon">
-    <iconset resource="../graphics.qrc">
-     <normaloff>:/icons/toolbar/copy</normaloff>:/icons/toolbar/copy</iconset>
+    <iconset theme="copy">
+     <normaloff/>
+    </iconset>
    </property>
    <property name="text">
     <string>Copy Instance</string>
@@ -505,10 +469,40 @@
     <string>Manage your Mojang or Minecraft accounts.</string>
    </property>
   </action>
+  <action name="actionLaunchInstanceOffline">
+   <property name="text">
+    <string>Play Offline</string>
+   </property>
+   <property name="toolTip">
+    <string>Launch the selected instance in offline mode.</string>
+   </property>
+   <property name="statusTip">
+    <string>Launch the selected instance.</string>
+   </property>
+  </action>
+  <action name="actionScreenshots">
+   <property name="text">
+    <string>Manage Screenshots</string>
+   </property>
+   <property name="toolTip">
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;View and upload screenshots for this instance&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+   </property>
+  </action>
+  <action name="actionInstanceSettings">
+   <property name="text">
+    <string>Instance Settings</string>
+   </property>
+   <property name="toolTip">
+    <string>Change the settings specific to the instance</string>
+   </property>
+  </action>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <resources>
-  <include location="../graphics.qrc"/>
+  <include location="../resources/pe_dark/pe_dark.qrc"/>
+  <include location="../resources/pe_light/pe_light.qrc"/>
+  <include location="../resources/multimc/multimc.qrc"/>
+  <include location="../resources/instances/instances.qrc"/>
  </resources>
  <connections/>
 </ui>

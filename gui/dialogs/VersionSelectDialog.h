@@ -43,7 +43,9 @@ public:
 
 	BaseVersionPtr selectedVersion() const;
 
-	void setFilter(int column, QString filter);
+	void setFuzzyFilter(int column, QString filter);
+	void setExactFilter(int column, QString filter);
+	void setEmptyString(QString emptyString);
 	void setResizeOn(int column);
 
 private

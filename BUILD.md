@@ -2,9 +2,17 @@ Build Instructions
 ==================
 
 # Contents
+* [Note](#note)
 * [Linux](#linux)
 * [Windows](#windows)
 * [OS X](#os-x)
+
+# Note
+
+MultiMC is a portable application and is not supposed to be installed into any system folders.
+That would be anything outside your home folder. Before runing `make install`, make sure
+you set the install path to something you have write access to. Never build this under
+an administrator/root level account. Don't use `sudo`. It won't work and it's not supposed to work.
 
 # Linux
 
@@ -56,7 +64,7 @@ Getting the project to build and run on Windows is easy if you use Qt's IDE, Qt 
 
 ## Dependencies
 * Qt 5.1.1+ Development tools (http://qt-project.org/downloads) ("Qt Online Installer for Windows")
-* OpenSSL (http://slproweb.com/products/Win32OpenSSL.html) ("Win32 OpenSSL v1.0.1e Light")
+* OpenSSL (http://slproweb.com/products/Win32OpenSSL.html) ("Win32 OpenSSL \<version\> Light")
     - Microsoft Visual C++ 2008 Redist. is required for this, there's a link on the OpenSSL download page above next to the main download.
 * CMake (http://www.cmake.org/cmake/resources/software.html) ("Windows (Win32 Installer)")
 * A copy of the MultiMC source (clone it with git)

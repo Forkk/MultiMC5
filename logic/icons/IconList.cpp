@@ -15,14 +15,14 @@
 
 #include "IconList.h"
 #include <pathutils.h>
-#include <settingsobject.h>
+#include "logic/settings/SettingsObject.h"
 #include <QMap>
 #include <QEventLoop>
 #include <QMimeData>
 #include <QUrl>
 #include <QFileSystemWatcher>
 #include <MultiMC.h>
-#include <setting.h>
+#include <logic/settings/Setting.h>
 
 #define MAX_SIZE 1024
 
@@ -45,8 +45,8 @@ IconList::IconList(QObject *parent) : QAbstractListModel(parent)
 
 	auto setting = MMC->settings()->getSetting("IconsDir");
 	QString path = setting->get().toString();
-	connect(setting.get(), SIGNAL(settingChanged(const Setting &, QVariant)),
-			SLOT(settingChanged(const Setting &, QVariant)));
+	connect(setting.get(), SIGNAL(SettingChanged(const Setting &, QVariant)),
+			SLOT(SettingChanged(const Setting &, QVariant)));
 	directoryChanged(path);
 }
 
@@ -143,7 +143,7 @@ void IconList::fileChanged(const QString &path)
 	emit iconUpdated(key);
 }
 
-void IconList::settingChanged(const Setting &setting, QVariant value)
+void IconList::SettingChanged(const Setting &setting, QVariant value)
 {
 	if(setting.id() != "IconsDir")
 		return;
@@ -255,7 +255,7 @@ void IconList::installIcons(QStringList iconFiles)
 		QFileInfo fileinfo(file);
 		if (!fileinfo.isReadable() || !fileinfo.isFile())
 			continue;
-		QString target = PathCombine("icons", fileinfo.fileName());
+		QString target = PathCombine(m_dir.dirName(), fileinfo.fileName());
 
 		QString suffix = fileinfo.suffix();
 		if (suffix != "jpeg" && suffix != "png" && suffix != "jpg" && suffix != "ico")
@@ -334,6 +334,23 @@ QIcon IconList::getIcon(QString key)
 	if (icon_index != -1)
 		return icons[icon_index].icon();
 	return QIcon();
+}
+
+QIcon IconList::getBigIcon(QString key)
+{
+	int icon_index = getIconIndex(key);
+
+	if (icon_index == -1)
+		key = "infinity";
+
+	// Fallback for icons that don't exist.
+	icon_index = getIconIndex(key);
+
+	if (icon_index == -1)
+		return QIcon();
+
+	QPixmap bigone = icons[icon_index].icon().pixmap(256,256).scaled(256,256);
+	return QIcon(bigone);
 }
 
 int IconList::getIconIndex(QString key)

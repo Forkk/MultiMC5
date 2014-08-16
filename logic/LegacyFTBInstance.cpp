@@ -7,10 +7,14 @@ LegacyFTBInstance::LegacyFTBInstance(const QString &rootDir, SettingsObject *set
 
 QString LegacyFTBInstance::getStatusbarDescription()
 {
+	if (flags().contains(VersionBrokenFlag))
+	{
+		return "Legacy FTB: " + intendedVersionId() + " (broken)";
+	}
 	return "Legacy FTB: " + intendedVersionId();
 }
 
-bool LegacyFTBInstance::menuActionEnabled(QString action_name) const
+QString LegacyFTBInstance::id() const
 {
-	return false;
+	return "FTB/" + BaseInstance::id();
 }

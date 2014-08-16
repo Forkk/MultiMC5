@@ -5,11 +5,11 @@
 #include <QJsonArray>
 
 #include "MultiMC.h"
+#include "BuildConfig.h"
 #include "logic/net/CacheDownload.h"
-#include "config.h"
 
 NotificationChecker::NotificationChecker(QObject *parent)
-	: QObject(parent), m_notificationsUrl(QUrl(NOTIFICATION_URL))
+	: QObject(parent), m_notificationsUrl(QUrl(BuildConfig.NOTIFICATION_URL))
 {
 	// this will call checkForNotifications once the event loop is running
 	QMetaObject::invokeMethod(this, "checkForNotifications", Qt::QueuedConnection);
@@ -55,7 +55,7 @@ void NotificationChecker::downloadSucceeded(int)
 {
 	m_entries.clear();
 
-	QFile file(m_download->m_output_file.fileName());
+	QFile file(m_download->getTargetFilepath());
 	if (file.open(QFile::ReadOnly))
 	{
 		QJsonArray root = QJsonDocument::fromJson(file.readAll()).array();
@@ -66,7 +66,7 @@ void NotificationChecker::downloadSucceeded(int)
 			entry.id = obj.value("id").toDouble();
 			entry.message = obj.value("message").toString();
 			entry.channel = obj.value("channel").toString();
-			entry.buildtype = obj.value("buildtype").toString();
+			entry.platform = obj.value("platform").toString();
 			entry.from = obj.value("from").toString();
 			entry.to = obj.value("to").toString();
 			const QString type = obj.value("type").toString("critical");
@@ -93,13 +93,13 @@ void NotificationChecker::downloadSucceeded(int)
 
 bool NotificationChecker::NotificationEntry::applies() const
 {
-	bool channelApplies = channel.isEmpty() || channel == VERSION_CHANNEL;
-	bool buildtypeApplies = buildtype.isEmpty() || buildtype == VERSION_BUILD_TYPE;
+	bool channelApplies = channel.isEmpty() || channel == BuildConfig.VERSION_CHANNEL;
+	bool platformApplies = platform.isEmpty() || platform == BuildConfig.BUILD_PLATFORM;
 	bool fromApplies =
-		from.isEmpty() || from == FULL_VERSION_STR || !versionLessThan(FULL_VERSION_STR, from);
+		from.isEmpty() || from == BuildConfig.FULL_VERSION_STR || !versionLessThan(BuildConfig.FULL_VERSION_STR, from);
 	bool toApplies =
-		to.isEmpty() || to == FULL_VERSION_STR || !versionLessThan(to, FULL_VERSION_STR);
-	return channelApplies && buildtypeApplies && fromApplies && toApplies;
+		to.isEmpty() || to == BuildConfig.FULL_VERSION_STR || !versionLessThan(to, BuildConfig.FULL_VERSION_STR);
+	return channelApplies && platformApplies && fromApplies && toApplies;
 }
 
 bool NotificationChecker::NotificationEntry::versionLessThan(const QString &v1,

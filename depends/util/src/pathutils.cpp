@@ -19,7 +19,6 @@
 #include <QDir>
 #include <QDesktopServices>
 #include <QUrl>
-#include <QDebug>
 
 QString PathCombine(QString path1, QString path2)
 {
@@ -138,10 +137,18 @@ void openDirInDefaultProgram(QString path, bool ensureExists)
 	{
 		parentPath.mkpath(dir.absolutePath());
 	}
-	QDesktopServices::openUrl("file:///" + dir.absolutePath());
+	QDesktopServices::openUrl(QUrl::fromLocalFile(dir.absolutePath()));
 }
 
 void openFileInDefaultProgram(QString filename)
 {
-	QDesktopServices::openUrl("file:///" + QFileInfo(filename).absolutePath());
+	QDesktopServices::openUrl(QUrl::fromLocalFile(filename));
+}
+
+// Does the directory path contain any '!'? If yes, return true, otherwise false.
+// (This is a problem for Java)
+bool checkProblemticPathJava(QDir folder)
+{
+	QString pathfoldername = folder.absolutePath();
+	return pathfoldername.contains("!", Qt::CaseInsensitive);
 }

@@ -16,6 +16,7 @@
 #include "UpdateChecker.h"
 
 #include "MultiMC.h"
+#include "BuildConfig.h"
 
 #include "logger/QsLog.h"
 
@@ -23,15 +24,14 @@
 #include <QJsonArray>
 #include <QJsonValue>
 
-#include <settingsobject.h>
+#include "logic/settings/SettingsObject.h"
 
 #define API_VERSION 0
 #define CHANLIST_FORMAT 0
 
 UpdateChecker::UpdateChecker()
 {
-	m_currentChannel = VERSION_CHANNEL;
-	m_channelListUrl = CHANLIST_URL;
+	m_channelListUrl = BuildConfig.CHANLIST_URL;
 	m_updateChecking = false;
 	m_chanListLoading = false;
 	m_checkUpdateWaiting = false;
@@ -59,7 +59,7 @@ void UpdateChecker::checkForUpdate(bool notifyNoUpdate)
 		QLOG_DEBUG() << "Channel list isn't loaded yet. Loading channel list and deferring "
 						"update check.";
 		m_checkUpdateWaiting = true;
-		updateChanList();
+		updateChanList(notifyNoUpdate);
 		return;
 	}
 
@@ -142,8 +142,6 @@ void UpdateChecker::updateCheckFinished(bool notifyNoUpdate)
 		if (newestVersion.value("Id").toVariant().toInt() <
 			version.value("Id").toVariant().toInt())
 		{
-			QLOG_DEBUG() << "Found newer version with ID"
-						 << version.value("Id").toVariant().toInt();
 			newestVersion = version;
 		}
 	}
@@ -151,8 +149,9 @@ void UpdateChecker::updateCheckFinished(bool notifyNoUpdate)
 	// We've got the version with the greatest ID number. Now compare it to our current build
 	// number and update if they're different.
 	int newBuildNumber = newestVersion.value("Id").toVariant().toInt();
-	if (newBuildNumber != MMC->version().build)
+	if (newBuildNumber != BuildConfig.VERSION_BUILD)
 	{
+		QLOG_DEBUG() << "Found newer version with ID" << newBuildNumber;
 		// Update!
 		emit updateAvailable(m_repoUrl, newestVersion.value("Name").toVariant().toString(),
 							 newBuildNumber);
@@ -171,7 +170,7 @@ void UpdateChecker::updateCheckFailed()
 	QLOG_ERROR() << "Update check failed for reasons unknown.";
 }
 
-void UpdateChecker::updateChanList()
+void UpdateChecker::updateChanList(bool notifyNoUpdate)
 {
 	QLOG_DEBUG() << "Loading the channel list.";
 
@@ -186,13 +185,14 @@ void UpdateChecker::updateChanList()
 	m_chanListLoading = true;
 	NetJob *job = new NetJob("Update System Channel List");
 	job->addNetAction(ByteArrayDownload::make(QUrl(m_channelListUrl)));
-	QObject::connect(job, &NetJob::succeeded, this, &UpdateChecker::chanListDownloadFinished);
+	connect(job, &NetJob::succeeded, [this, notifyNoUpdate]()
+	{ chanListDownloadFinished(notifyNoUpdate); });
 	QObject::connect(job, &NetJob::failed, this, &UpdateChecker::chanListDownloadFailed);
 	chanListJob.reset(job);
 	job->start();
 }
 
-void UpdateChecker::chanListDownloadFinished()
+void UpdateChecker::chanListDownloadFinished(bool notifyNoUpdate)
 {
 	QByteArray data;
 	{
@@ -251,7 +251,7 @@ void UpdateChecker::chanListDownloadFinished()
 
 	// If we're waiting to check for updates, do that now.
 	if (m_checkUpdateWaiting)
-		checkForUpdate(false);
+		checkForUpdate(notifyNoUpdate);
 
 	emit channelListLoaded();
 }
@@ -262,3 +262,4 @@ void UpdateChecker::chanListDownloadFailed()
 	QLOG_ERROR() << "Failed to download channel list.";
 	emit channelListLoaded();
 }
+

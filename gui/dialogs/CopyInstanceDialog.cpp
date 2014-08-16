@@ -28,11 +28,10 @@
 #include "logic/InstanceFactory.h"
 #include "logic/BaseVersion.h"
 #include "logic/icons/IconList.h"
-#include "logic/lists/MinecraftVersionList.h"
 #include "logic/tasks/Task.h"
 #include "logic/BaseInstance.h"
 
-CopyInstanceDialog::CopyInstanceDialog(BaseInstance *original, QWidget *parent)
+CopyInstanceDialog::CopyInstanceDialog(InstancePtr original, QWidget *parent)
 	:QDialog(parent), ui(new Ui::CopyInstanceDialog), m_original(original)
 {
 	MultiMCPlatform::fixWM_CLASS(this);

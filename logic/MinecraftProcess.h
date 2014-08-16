@@ -18,7 +18,7 @@
 #pragma once
 
 #include <QProcess>
-
+#include <QString>
 #include "BaseInstance.h"
 
 /**
@@ -31,11 +31,12 @@ enum Enum
 {
 	MultiMC, /**< MultiMC Messages */
 	Debug,   /**< Debug Messages */
-	Info,	/**< Info Messages */
+	Info,    /**< Info Messages */
 	Message, /**< Standard Messages */
 	Warning, /**< Warnings */
 	Error,   /**< Errors */
-	Fatal	/**< Fatal Errors */
+	Fatal,   /**< Fatal Errors */
+	PrePost, /**< Pre/Post Launch command output */
 };
 }
 
@@ -51,49 +52,72 @@ public:
 	 * @brief MinecraftProcess constructor
 	 * @param inst the Instance pointer to launch
 	 */
-	MinecraftProcess(BaseInstance *inst);
+	MinecraftProcess(InstancePtr inst);
+
+	virtual ~MinecraftProcess()
+	{
+		
+	};
+	
+	/**
+	 * @brief start the launcher part with the provided launch script
+	 */
+	void arm();
 
 	/**
-	 * @brief launch minecraft
+	 * @brief launch the armed instance!
 	 */
 	void launch();
 
-	BaseInstance *instance()
+	/**
+	 * @brief abort launch!
+	 */
+	void abort();
+
+	InstancePtr instance()
 	{
 		return m_instance;
 	}
 
 	void setWorkdir(QString path);
 
-	void setArguments(QStringList args);
+	void setLaunchScript(QString script)
+	{
+		launchScript = script;
+	}
+
+	void setNativeFolder(QString natives)
+	{
+		m_nativeFolder = natives;
+	}
 
 	void killMinecraft();
 
-	inline void setLogin(MojangAccountPtr account)
+	inline void setLogin(AuthSessionPtr session)
 	{
-		m_account = account;
+		m_session = session;
 	}
 
 signals:
 	/**
 	 * @brief emitted when Minecraft immediately fails to run
 	 */
-	void launch_failed(BaseInstance *);
+	void launch_failed(InstancePtr);
 
 	/**
 	 * @brief emitted when the PreLaunchCommand fails
 	 */
-	void prelaunch_failed(BaseInstance *, int code, QProcess::ExitStatus status);
+	void prelaunch_failed(InstancePtr, int code, QProcess::ExitStatus status);
 
 	/**
 	 * @brief emitted when the PostLaunchCommand fails
 	 */
-	void postlaunch_failed(BaseInstance *, int code, QProcess::ExitStatus status);
+	void postlaunch_failed(InstancePtr, int code, QProcess::ExitStatus status);
 
 	/**
 	 * @brief emitted when mc has finished and the PostLaunchCommand was run
 	 */
-	void ended(BaseInstance *, int code, QProcess::ExitStatus status);
+	void ended(InstancePtr, int code, QProcess::ExitStatus status);
 
 	/**
 	 * @brief emitted when we want to log something
@@ -103,22 +127,39 @@ signals:
 	void log(QString text, MessageLevel::Enum level = MessageLevel::MultiMC);
 
 protected:
-	BaseInstance *m_instance = nullptr;
-	QStringList m_args;
+	InstancePtr m_instance;
 	QString m_err_leftover;
 	QString m_out_leftover;
 	QProcess m_prepostlaunchprocess;
 	bool killed = false;
-	MojangAccountPtr m_account;
+	AuthSessionPtr m_session;
+	QString launchScript;
+	QString m_nativeFolder;
+
+	bool preLaunch();
+	bool postLaunch();
+	bool waitForPrePost();
+	QMap<QString, QString> getVariables() const;
+	QString substituteVariables(const QString &cmd) const;
+
+	QStringList javaArguments() const;
 
 protected
 slots:
 	void finish(int, QProcess::ExitStatus status);
 	void on_stdErr();
 	void on_stdOut();
+	void on_prepost_stdOut();
+	void on_prepost_stdErr();
+	void logOutput(const QStringList &lines,
+				   MessageLevel::Enum defaultLevel = MessageLevel::Message,
+				   bool guessLevel = true, bool censor = true);
+	void logOutput(QString line,
+				   MessageLevel::Enum defaultLevel = MessageLevel::Message,
+				   bool guessLevel = true, bool censor = true);
 
 private:
 	QString censorPrivateInfo(QString in);
-	MessageLevel::Enum getLevel(const QString &message, MessageLevel::Enum defaultLevel);
-	
+	MessageLevel::Enum guessLevel(const QString &message, MessageLevel::Enum defaultLevel);
+	MessageLevel::Enum getLevel(const QString &levelName);
 };

@@ -14,16 +14,23 @@
  */
 
 #pragma once
-#include <QString>
-#include <settingsobject.h>
 
-class BaseInstance;
+#include <QString>
+#include <QSet>
+
+#include "logic/settings/SettingsObject.h"
+
+#include "BaseInstance.h"
 
 #define I_D(Class) Class##Private *const d = (Class##Private * const)inst_d.get()
 
-struct BaseInstancePrivate
+class BaseInstancePrivate
 {
+public:
+    virtual ~BaseInstancePrivate(){};
 	QString m_rootDir;
 	QString m_group;
-	SettingsObject *m_settings;
+	std::shared_ptr<SettingsObject> m_settings;
+	QSet<BaseInstance::InstanceFlag> m_flags;
+	bool m_isRunning = false;
 };

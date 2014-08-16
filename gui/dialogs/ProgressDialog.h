@@ -35,6 +35,7 @@ public:
 	void updateSize();
 
 	int exec(ProgressProvider *task);
+
 	void setSkipButton(bool present, QString label = QString());
 
 	ProgressProvider *getTask();

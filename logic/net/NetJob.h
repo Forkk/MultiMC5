@@ -21,7 +21,6 @@
 #include "MD5EtagDownload.h"
 #include "CacheDownload.h"
 #include "HttpMetaCache.h"
-#include "ForgeXzDownload.h"
 #include "logic/tasks/ProgressProvider.h"
 
 class NetJob;
@@ -32,7 +31,7 @@ class NetJob : public ProgressProvider
 	Q_OBJECT
 public:
 	explicit NetJob(QString job_name) : ProgressProvider(), m_job_name(job_name) {};
-
+	virtual ~NetJob() {};
 	template <typename T> bool addNetAction(T action)
 	{
 		NetActionPtr base = std::static_pointer_cast<NetAction>(action);
@@ -84,7 +83,6 @@ public:
 	{
 		return m_job_name;
 	}
-	;
 	virtual bool isRunning() const
 	{
 		return m_running;
@@ -94,7 +92,6 @@ public:
 signals:
 	void started();
 	void progress(qint64 current, qint64 total);
-	void filesProgress(int, int, int);
 	void succeeded();
 	void failed();
 public

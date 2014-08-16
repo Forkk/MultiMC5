@@ -21,6 +21,7 @@
 
 #include "logic/net/NetJob.h"
 #include "logic/tasks/Task.h"
+#include "logic/VersionFilterData.h"
 
 class MinecraftVersion;
 class BaseInstance;
@@ -31,7 +32,7 @@ class LegacyUpdate : public Task
 {
 	Q_OBJECT
 public:
-	explicit LegacyUpdate(BaseInstance *inst, bool only_prepare, QObject *parent = 0);
+	explicit LegacyUpdate(BaseInstance *inst, QObject *parent = 0);
 	virtual void executeTask();
 
 private
@@ -43,6 +44,10 @@ slots:
 	void jarStart();
 	void jarFinished();
 	void jarFailed();
+
+	void fmllibsStart();
+	void fmllibsFinished();
+	void fmllibsFailed();
 
 	void extractLwjgl();
 
@@ -72,5 +77,5 @@ private:
 private:
 	NetJobPtr legacyDownloadJob;
 	BaseInstance *m_inst = nullptr;
-	bool m_only_prepare = false;
+	QList<FMLlib> fmlLibsToProcess;
 };

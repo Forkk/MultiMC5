@@ -21,27 +21,30 @@
 
 #include "logic/net/NetJob.h"
 #include "logic/tasks/Task.h"
-#include "logic/JavaChecker.h"
+#include "logic/VersionFilterData.h"
+#include <quazip.h>
 
 class MinecraftVersion;
-class BaseInstance;
+class OneSixInstance;
 
 class OneSixUpdate : public Task
 {
 	Q_OBJECT
 public:
-	explicit OneSixUpdate(BaseInstance *inst, bool prepare_for_launch, QObject *parent = 0);
+	explicit OneSixUpdate(OneSixInstance *inst, QObject *parent = 0);
 	virtual void executeTask();
 
 private
 slots:
-	void versionFileStart();
-	void versionFileFinished();
-	void versionFileFailed();
+	void versionUpdateFailed(QString reason);
 
 	void jarlibStart();
 	void jarlibFinished();
 	void jarlibFailed();
+
+	void fmllibsStart();
+	void fmllibsFinished();
+	void fmllibsFailed();
 
 	void assetIndexStart();
 	void assetIndexFinished();
@@ -50,22 +53,18 @@ slots:
 	void assetsFinished();
 	void assetsFailed();
 
-	void checkJavaOnline();
-	void checkFinishedOnline(JavaCheckResult result);
-	void checkFinishedOffline(JavaCheckResult result);
-
-	// extract the appropriate libraries
-	void prepareForLaunch();
-
+	void stripJar(QString origPath, QString newPath);
+	bool MergeZipFiles(QuaZip *into, QString from);
 private:
-	NetJobPtr specificVersionDownloadJob;
 	NetJobPtr jarlibDownloadJob;
+	NetJobPtr legacyDownloadJob;
 
-	// target version, determined during this task
+	/// target version, determined during this task
 	std::shared_ptr<MinecraftVersion> targetVersion;
-	BaseInstance *m_inst = nullptr;
-	bool m_only_prepare = false;
-	std::shared_ptr<JavaChecker> checker;
-
-	bool java_is_64bit = false;
+	/// the task that is spawned for version updates
+	std::shared_ptr<Task> versionUpdateTask;
+	
+	OneSixInstance *m_inst = nullptr;
+	QString jarHashOnEntry;
+	QList<FMLlib> fmlLibsToProcess;
 };

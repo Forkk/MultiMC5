@@ -16,20 +16,18 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSystemTrayIcon>
 #include "logic/MinecraftProcess.h"
 
-namespace Ui
-{
-class ConsoleWindow;
-}
-
+class QPushButton;
+class PageContainer;
 class ConsoleWindow : public QMainWindow
 {
 	Q_OBJECT
 
 public:
 	explicit ConsoleWindow(MinecraftProcess *proc, QWidget *parent = 0);
-	~ConsoleWindow();
+	virtual ~ConsoleWindow() {};
 
 	/**
 	 * @brief specify if the window is allowed to close
@@ -38,53 +36,30 @@ public:
 	 */
 	void setMayClose(bool mayclose);
 
-private:
-	/**
-	 * @brief write a colored paragraph
-	 * @param data the string
-	 * @param color the css color name
-	 * this will only insert a single paragraph.
-	 * \n are ignored. a real \n is always appended.
-	 */
-	void writeColor(QString data, const char *color = nullptr);
-
 signals:
 	void isClosing();
-
-public
-slots:
-	/**
-	 * @brief write a string
-	 * @param data the string
-	 * @param mode the WriteMode
-	 * lines have to be put through this as a whole!
-	 */
-	void write(QString data, MessageLevel::Enum level = MessageLevel::MultiMC);
-
-	/**
-	 * @brief clear the text widget
-	 */
-	void clear();
 
 private
 slots:
 	void on_closeButton_clicked();
 	void on_btnKillMinecraft_clicked();
-	void onEnded(BaseInstance *instance, int code, QProcess::ExitStatus status);
-	void onLaunchFailed(BaseInstance *instance);
+
+	void onEnded(InstancePtr instance, int code, QProcess::ExitStatus status);
+	void onLaunchFailed(InstancePtr instance);
 
 	// FIXME: add handlers for the other MinecraftProcess signals (pre/post launch command
 	// failures)
 
-	void on_btnPaste_clicked();
-
+	void iconActivated(QSystemTrayIcon::ActivationReason);
+	void toggleConsole();
 protected:
 	void closeEvent(QCloseEvent *);
 
 private:
-	Ui::ConsoleWindow *ui = nullptr;
-	MinecraftProcess *proc = nullptr;
+	MinecraftProcess *m_proc = nullptr;
 	bool m_mayclose = true;
-	int m_last_scroll_value = 0;
-	bool m_scroll_active = true;
+	QSystemTrayIcon *m_trayIcon = nullptr;
+	PageContainer *m_container = nullptr;
+	QPushButton *m_closeButton = nullptr;
+	QPushButton *m_killButton = nullptr;
 };

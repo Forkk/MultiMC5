@@ -24,7 +24,7 @@
 
 #include "Mod.h"
 #include <pathutils.h>
-#include <inifile.h>
+#include "logic/settings/INIFile.h"
 #include "logger/QsLog.h"
 
 Mod::Mod(const QFileInfo &file)
@@ -164,8 +164,22 @@ void Mod::ReadMCModInfo(QByteArray contents)
 		m_name = firstObj.value("name").toString();
 		m_version = firstObj.value("version").toString();
 		m_homeurl = firstObj.value("url").toString();
+		m_updateurl = firstObj.value("updateUrl").toString();
+		m_homeurl = m_homeurl.trimmed();
+		if(!m_homeurl.isEmpty())
+		{
+			// fix up url.
+			if (!m_homeurl.startsWith("http://") && !m_homeurl.startsWith("https://") &&
+				!m_homeurl.startsWith("ftp://"))
+			{
+				m_homeurl.prepend("http://");
+			}
+		}
 		m_description = firstObj.value("description").toString();
-		QJsonArray authors = firstObj.value("authors").toArray();
+		QJsonArray authors = firstObj.value("authorList").toArray();
+		if (authors.size() == 0)
+			authors = firstObj.value("authors").toArray();
+
 		if (authors.size() == 0)
 			m_authors = "";
 		else if (authors.size() >= 1)
@@ -178,7 +192,8 @@ void Mod::ReadMCModInfo(QByteArray contents)
 		}
 		m_credits = firstObj.value("credits").toString();
 		return;
-	};
+	}
+	;
 	QJsonParseError jsonError;
 	QJsonDocument jsonDoc = QJsonDocument::fromJson(contents, &jsonError);
 	// this is the very old format that had just the array
@@ -189,6 +204,8 @@ void Mod::ReadMCModInfo(QByteArray contents)
 	else if (jsonDoc.isObject())
 	{
 		auto val = jsonDoc.object().value("modinfoversion");
+		if(val.isUndefined())
+			val = jsonDoc.object().value("modListVersion");
 		int version = val.toDouble();
 		if (version != 2)
 		{
@@ -197,6 +214,8 @@ void Mod::ReadMCModInfo(QByteArray contents)
 			return;
 		}
 		auto arrVal = jsonDoc.object().value("modlist");
+		if(arrVal.isUndefined())
+			arrVal = jsonDoc.object().value("modList");
 		if (arrVal.isArray())
 		{
 			getInfoFromArray(arrVal.toArray());
@@ -227,17 +246,17 @@ void Mod::ReadLiteModInfo(QByteArray contents)
 	QJsonParseError jsonError;
 	QJsonDocument jsonDoc = QJsonDocument::fromJson(contents, &jsonError);
 	auto object = jsonDoc.object();
-	if(object.contains("name"))
+	if (object.contains("name"))
 	{
 		m_mod_id = m_name = object.value("name").toString();
 	}
-	if(object.contains("version"))
+	if (object.contains("version"))
 	{
-		m_version=object.value("version").toString("");
+		m_version = object.value("version").toString("");
 	}
 	else
 	{
-		m_version=object.value("revision").toString("");
+		m_version = object.value("revision").toString("");
 	}
 	m_mcversion = object.value("mcversion").toString();
 	m_authors = object.value("author").toString();
@@ -252,7 +271,7 @@ bool Mod::replace(Mod &with)
 	bool success = false;
 	auto t = with.type();
 
-	if (t == MOD_ZIPFILE || t == MOD_SINGLEFILE)
+	if (t == MOD_ZIPFILE || t == MOD_SINGLEFILE || t == MOD_LITEMOD)
 	{
 		QLOG_DEBUG() << "Copy: " << with.m_file.filePath() << " to " << m_file.filePath();
 		success = QFile::copy(with.m_file.filePath(), m_file.filePath());
@@ -290,7 +309,7 @@ bool Mod::destroy()
 		}
 		return false;
 	}
-	else if (m_type == MOD_SINGLEFILE || m_type == MOD_ZIPFILE)
+	else if (m_type == MOD_SINGLEFILE || m_type == MOD_ZIPFILE || m_type == MOD_LITEMOD)
 	{
 		QFile f(m_file.filePath());
 		if (f.remove())

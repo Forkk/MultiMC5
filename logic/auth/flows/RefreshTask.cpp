@@ -21,12 +21,10 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QVariant>
-#include <QDebug>
 
 #include "logger/QsLog.h"
 
-RefreshTask::RefreshTask(MojangAccount *account, QObject *parent)
-	: YggdrasilTask(account, parent)
+RefreshTask::RefreshTask(MojangAccount *account) : YggdrasilTask(account)
 {
 }
 
@@ -61,7 +59,7 @@ QJsonObject RefreshTask::getRequestContent() const
 	return req;
 }
 
-bool RefreshTask::processResponse(QJsonObject responseData)
+void RefreshTask::processResponse(QJsonObject responseData)
 {
 	// Read the response data. We need to get the client token, access token, and the selected
 	// profile.
@@ -74,17 +72,13 @@ bool RefreshTask::processResponse(QJsonObject responseData)
 	if (clientToken.isEmpty())
 	{
 		// Fail if the server gave us an empty client token
-		// TODO: Set an error properly to display to the user.
-		QLOG_ERROR() << "Server didn't send a client token.";
-		return false;
+		changeState(STATE_FAILED_HARD, tr("Authentication server didn't send a client token."));
+		return;
 	}
 	if (!m_account->m_clientToken.isEmpty() && clientToken != m_account->m_clientToken)
 	{
-		// The server changed our client token! Obey its wishes, but complain. That's what I do
-		// for my parents, so...
-		QLOG_ERROR() << "Server changed our client token to '" << clientToken
-					 << "'. This shouldn't happen, but it isn't really a big deal.";
-		return false;
+		changeState(STATE_FAILED_HARD, tr("Authentication server attempted to change the client token. This isn't supported."));
+		return;
 	}
 
 	// Now, we set the access token.
@@ -93,9 +87,8 @@ bool RefreshTask::processResponse(QJsonObject responseData)
 	if (accessToken.isEmpty())
 	{
 		// Fail if the server didn't give us an access token.
-		// TODO: Set an error properly to display to the user.
-		QLOG_ERROR() << "Server didn't send an access token.";
-		return false;
+		changeState(STATE_FAILED_HARD, tr("Authentication server didn't send an access token."));
+		return;
 	}
 
 	// we validate that the server responded right. (our current profile = returned current
@@ -104,9 +97,8 @@ bool RefreshTask::processResponse(QJsonObject responseData)
 	QString currentProfileId = currentProfile.value("id").toString("");
 	if (m_account->currentProfile()->id != currentProfileId)
 	{
-		// TODO: Set an error to display to the user.
-		QLOG_ERROR() << "Server didn't specify the same selected profile as ours.";
-		return false;
+		changeState(STATE_FAILED_HARD, tr("Authentication server didn't specify the same prefile as expected."));
+		return;
 	}
 
 	// this is what the vanilla launcher passes to the userProperties launch param
@@ -126,13 +118,12 @@ bool RefreshTask::processResponse(QJsonObject responseData)
 		m_account->m_user = u;
 	}
 
-
 	// We've made it through the minefield of possible errors. Return true to indicate that
 	// we've succeeded.
 	QLOG_DEBUG() << "Finished reading refresh response.";
 	// Reset the access token.
 	m_account->m_accessToken = accessToken;
-	return true;
+	changeState(STATE_SUCCEEDED);
 }
 
 QString RefreshTask::getEndpoint() const
@@ -140,15 +131,15 @@ QString RefreshTask::getEndpoint() const
 	return "refresh";
 }
 
-QString RefreshTask::getStateMessage(const YggdrasilTask::State state) const
+QString RefreshTask::getStateMessage() const
 {
-	switch (state)
+	switch (m_state)
 	{
 	case STATE_SENDING_REQUEST:
 		return tr("Refreshing login token...");
 	case STATE_PROCESSING_RESPONSE:
 		return tr("Refreshing login token: Processing response...");
 	default:
-		return YggdrasilTask::getStateMessage(state);
+		return YggdrasilTask::getStateMessage();
 	}
 }

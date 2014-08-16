@@ -13,27 +13,32 @@
  * limitations under the License.
  */
 
-#include "LegacyUpdate.h"
-#include "lists/LwjglVersionList.h"
-#include "lists/MinecraftVersionList.h"
-#include "BaseInstance.h"
-#include "LegacyInstance.h"
-#include "MultiMC.h"
-#include "ModList.h"
+#include <QStringList>
+
 #include <pathutils.h>
 #include <quazip.h>
 #include <quazipfile.h>
 #include <JlCompress.h>
+
+#include "logic/LegacyUpdate.h"
+#include "logic/LwjglVersionList.h"
+#include "logic/minecraft/MinecraftVersionList.h"
+#include "logic/BaseInstance.h"
+#include "logic/LegacyInstance.h"
+#include "MultiMC.h"
+#include "logic/ModList.h"
+
 #include "logger/QsLog.h"
 #include "logic/net/URLConstants.h"
 
-LegacyUpdate::LegacyUpdate(BaseInstance *inst, bool only_prepare, QObject *parent)
-	: Task(parent), m_inst(inst), m_only_prepare(only_prepare)
+
+LegacyUpdate::LegacyUpdate(BaseInstance *inst, QObject *parent) : Task(parent), m_inst(inst)
 {
 }
 
 void LegacyUpdate::executeTask()
 {
+	/*
 	if(m_only_prepare)
 	{
 		// FIXME: think this through some more.
@@ -49,8 +54,130 @@ void LegacyUpdate::executeTask()
 	}
 	else
 	{
+		*/
+	fmllibsStart();
+	//}
+}
+
+void LegacyUpdate::fmllibsStart()
+{
+	// Get the mod list
+	LegacyInstance *inst = (LegacyInstance *)m_inst;
+	auto modList = inst->jarModList();
+
+	bool forge_present = false;
+
+	QString version = inst->intendedVersionId();
+	auto & fmlLibsMapping = g_VersionFilterData.fmlLibsMapping;
+	if (!fmlLibsMapping.contains(version))
+	{
 		lwjglStart();
+		return;
 	}
+
+	auto &libList = fmlLibsMapping[version];
+
+	// determine if we need some libs for FML or forge
+	setStatus(tr("Checking for FML libraries..."));
+	for (unsigned i = 0; i < modList->size(); i++)
+	{
+		auto &mod = modList->operator[](i);
+
+		// do not use disabled mods.
+		if (!mod.enabled())
+			continue;
+
+		if (mod.type() != Mod::MOD_ZIPFILE)
+			continue;
+
+		if (mod.mmc_id().contains("forge", Qt::CaseInsensitive))
+		{
+			forge_present = true;
+			break;
+		}
+		if (mod.mmc_id().contains("fml", Qt::CaseInsensitive))
+		{
+			forge_present = true;
+			break;
+		}
+	}
+	// we don't...
+	if (!forge_present)
+	{
+		lwjglStart();
+		return;
+	}
+
+	// now check the lib folder inside the instance for files.
+	for (auto &lib : libList)
+	{
+		QFileInfo libInfo(PathCombine(inst->libDir(), lib.filename));
+		if (libInfo.exists())
+			continue;
+		fmlLibsToProcess.append(lib);
+	}
+
+	// if everything is in place, there's nothing to do here...
+	if (fmlLibsToProcess.isEmpty())
+	{
+		lwjglStart();
+		return;
+	}
+
+	// download missing libs to our place
+	setStatus(tr("Dowloading FML libraries..."));
+	auto dljob = new NetJob("FML libraries");
+	auto metacache = MMC->metacache();
+	for (auto &lib : fmlLibsToProcess)
+	{
+		auto entry = metacache->resolveEntry("fmllibs", lib.filename);
+		QString urlString = lib.ours ? URLConstants::FMLLIBS_OUR_BASE_URL + lib.filename
+									 : URLConstants::FMLLIBS_FORGE_BASE_URL + lib.filename;
+		dljob->addNetAction(CacheDownload::make(QUrl(urlString), entry));
+	}
+
+	connect(dljob, SIGNAL(succeeded()), SLOT(fmllibsFinished()));
+	connect(dljob, SIGNAL(failed()), SLOT(fmllibsFailed()));
+	connect(dljob, SIGNAL(progress(qint64, qint64)), SIGNAL(progress(qint64, qint64)));
+	legacyDownloadJob.reset(dljob);
+	legacyDownloadJob->start();
+}
+
+void LegacyUpdate::fmllibsFinished()
+{
+	legacyDownloadJob.reset();
+	if(!fmlLibsToProcess.isEmpty())
+	{
+		setStatus(tr("Copying FML libraries into the instance..."));
+		LegacyInstance *inst = (LegacyInstance *)m_inst;
+		auto metacache = MMC->metacache();
+		int index = 0;
+		for (auto &lib : fmlLibsToProcess)
+		{
+			progress(index, fmlLibsToProcess.size());
+			auto entry = metacache->resolveEntry("fmllibs", lib.filename);
+			auto path = PathCombine(inst->libDir(), lib.filename);
+			if(!ensureFilePathExists(path))
+			{
+				emitFailed(tr("Failed creating FML library folder inside the instance."));
+				return;
+			}
+			if (!QFile::copy(entry->getFullPath(), PathCombine(inst->libDir(), lib.filename)))
+			{
+				emitFailed(tr("Failed copying Forge/FML library: %1.").arg(lib.filename));
+				return;
+			}
+			index++;
+		}
+		progress(index, fmlLibsToProcess.size());
+	}
+	lwjglStart();
+}
+
+void LegacyUpdate::fmllibsFailed()
+{
+	emitFailed("Game update failed: it was impossible to fetch the required FML libraries.");
+	return;
 }
 
 void LegacyUpdate::lwjglStart()
@@ -97,8 +224,6 @@ void LegacyUpdate::lwjglStart()
 	connect(rep, SIGNAL(downloadProgress(qint64, qint64)), SIGNAL(progress(qint64, qint64)));
 	connect(worker.get(), SIGNAL(finished(QNetworkReply *)),
 			SLOT(lwjglFinished(QNetworkReply *)));
-	// connect(rep, SIGNAL(error(QNetworkReply::NetworkError)),
-	// SLOT(downloadError(QNetworkReply::NetworkError)));
 }
 
 void LegacyUpdate::lwjglFinished(QNetworkReply *reply)
@@ -268,7 +393,6 @@ void LegacyUpdate::jarStart()
 
 	auto dljob = new NetJob("Minecraft.jar for version " + version_id);
 
-
 	auto metacache = MMC->metacache();
 	auto entry = metacache->resolveEntry("versions", localPath);
 	dljob->addNetAction(CacheDownload::make(QUrl(urlstr), entry));
@@ -425,7 +549,7 @@ void LegacyUpdate::ModTheJar()
 		auto &mod = modList->operator[](i);
 
 		// do not merge disabled mods.
-		if(!mod.enabled())
+		if (!mod.enabled())
 			continue;
 
 		if (mod.type() == Mod::MOD_ZIPFILE)

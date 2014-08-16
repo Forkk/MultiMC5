@@ -15,16 +15,19 @@
 
 #pragma once
 
-#include <memory>
-
 #include "logic/BaseInstance_p.h"
-#include "logic/OneSixVersion.h"
-#include "logic/OneSixLibrary.h"
-#include "logic/ModList.h"
 
-struct OneSixInstancePrivate : public BaseInstancePrivate
+class ModList;
+class InstanceVersion;
+
+class OneSixInstancePrivate : public BaseInstancePrivate
 {
-	std::shared_ptr<OneSixVersion> version;
+public:
+	virtual ~OneSixInstancePrivate() {};
+	std::shared_ptr<InstanceVersion> version;
+	std::shared_ptr<ModList> jar_mod_list;
 	std::shared_ptr<ModList> loader_mod_list;
+	std::shared_ptr<ModList> core_mod_list;
 	std::shared_ptr<ModList> resource_pack_list;
+	std::shared_ptr<ModList> texture_pack_list;
 };

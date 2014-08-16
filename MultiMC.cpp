@@ -1,5 +1,6 @@
-
 #include "MultiMC.h"
+#include "BuildConfig.h"
+
 #include <iostream>
 #include <QDir>
 #include <QFileInfo>
@@ -11,40 +12,52 @@
 #include <QDesktopServices>
 
 #include "gui/dialogs/VersionSelectDialog.h"
-#include "logic/lists/InstanceList.h"
+#include "logic/InstanceList.h"
 #include "logic/auth/MojangAccountList.h"
 #include "logic/icons/IconList.h"
-#include "logic/lists/LwjglVersionList.h"
-#include "logic/lists/MinecraftVersionList.h"
-#include "logic/lists/ForgeVersionList.h"
+#include "logic/LwjglVersionList.h"
+#include "logic/minecraft/MinecraftVersionList.h"
+#include "logic/liteloader/LiteLoaderVersionList.h"
+
+#include "logic/forge/ForgeVersionList.h"
 
 #include "logic/news/NewsChecker.h"
 
+#include "logic/status/StatusChecker.h"
+
 #include "logic/InstanceLauncher.h"
 #include "logic/net/HttpMetaCache.h"
+#include "logic/net/URLConstants.h"
 
-#include "logic/JavaUtils.h"
+#include "logic/java/JavaUtils.h"
 
 #include "logic/updater/UpdateChecker.h"
 #include "logic/updater/NotificationChecker.h"
 
+#include "logic/tools/JProfiler.h"
+#include "logic/tools/JVisualVM.h"
+#include "logic/tools/MCEditTool.h"
+
+#include "logic/URNResolver.h"
+
 #include "pathutils.h"
 #include "cmdutils.h"
-#include <inisettingsobject.h>
-#include <setting.h>
+#include "logic/settings/INISettingsObject.h"
+#include "logic/settings/Setting.h"
 #include "logger/QsLog.h"
-#include <logger/QsLogDest.h>
+#include "logger/QsLogDest.h"
+
+#ifdef Q_OS_WIN32
+#include <windows.h>
+static const int APPDATA_BUFFER_SIZE = 1024;
+#endif
 
 using namespace Util::Commandline;
 
-MultiMC::MultiMC(int &argc, char **argv, bool root_override)
-	: QApplication(argc, argv), m_version{VERSION_MAJOR,   VERSION_MINOR,	 VERSION_BUILD,
-										  VERSION_CHANNEL, VERSION_BUILD_TYPE}
+MultiMC::MultiMC(int &argc, char **argv, bool root_override) : QApplication(argc, argv)
 {
 	setOrganizationName("MultiMC");
 	setApplicationName("MultiMC5");
-
-	initTranslations();
 
 	setAttribute(Qt::AA_UseHighDpiPixmaps);
 	// Don't quit on hiding the last window
@@ -75,6 +88,7 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 		parser.addShortOpt("launch", 'l');
 		parser.addDocumentation("launch", "tries to launch the given instance", "<inst>");
 */
+
 		// parse the arguments
 		try
 		{
@@ -100,8 +114,8 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 		// display version and exit
 		if (args["version"].toBool())
 		{
-			std::cout << "Version " << VERSION_STR << std::endl;
-			std::cout << "Git " << GIT_COMMIT << std::endl;
+			std::cout << "Version " << BuildConfig.VERSION_STR.toStdString() << std::endl;
+			std::cout << "Git " << BuildConfig.GIT_COMMIT.toStdString() << std::endl;
 			m_status = MultiMC::Succeeded;
 			return;
 		}
@@ -124,7 +138,7 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 		adjustedBy += "Fallback to binary path " + dataPath;
 	}
 
-	if(!ensureFolderPathExists(dataPath) || !QDir::setCurrent(dataPath))
+	if (!ensureFolderPathExists(dataPath) || !QDir::setCurrent(dataPath))
 	{
 		// BAD STUFF. WHAT DO?
 		initLogger();
@@ -139,23 +153,34 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 	}
 	else
 	{
-	#ifdef Q_OS_LINUX
+#ifdef Q_OS_LINUX
 		QDir foo(PathCombine(binPath, ".."));
 		rootPath = foo.absolutePath();
-	#elif defined(Q_OS_WIN32)
+#elif defined(Q_OS_WIN32)
 		rootPath = binPath;
-	#elif defined(Q_OS_MAC)
+#elif defined(Q_OS_MAC)
 		QDir foo(PathCombine(binPath, "../.."));
 		rootPath = foo.absolutePath();
-	#endif
+#endif
 	}
+
+// static data paths... mostly just for translations
+#ifdef Q_OS_LINUX
+	QDir foo(PathCombine(binPath, ".."));
+	staticDataPath = foo.absolutePath();
+#elif defined(Q_OS_WIN32)
+	staticDataPath = binPath;
+#elif defined(Q_OS_MAC)
+	QDir foo(PathCombine(rootPath, "Contents/Resources"));
+	staticDataPath = foo.absolutePath();
+#endif
 
 	// init the logger
 	initLogger();
 
 	QLOG_INFO() << "MultiMC 5, (c) 2013 MultiMC Contributors";
-	QLOG_INFO() << "Version                    : " << VERSION_STR;
-	QLOG_INFO() << "Git commit                 : " << GIT_COMMIT;
+	QLOG_INFO() << "Version                    : " << BuildConfig.VERSION_STR;
+	QLOG_INFO() << "Git commit                 : " << BuildConfig.GIT_COMMIT;
 	if (adjustedBy.size())
 	{
 		QLOG_INFO() << "Work dir before adjustment : " << origcwdPath;
@@ -168,9 +193,13 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 	}
 	QLOG_INFO() << "Binary path                : " << binPath;
 	QLOG_INFO() << "Application root path      : " << rootPath;
+	QLOG_INFO() << "Static data path           : " << staticDataPath;
 
 	// load settings
 	initGlobalSettings();
+
+	// load translations
+	initTranslations();
 
 	// initialize the updater
 	m_updateChecker.reset(new UpdateChecker());
@@ -179,14 +208,26 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 	m_notificationChecker.reset(new NotificationChecker());
 
 	// initialize the news checker
-	m_newsChecker.reset(new NewsChecker(NEWS_RSS_URL));
+	m_newsChecker.reset(new NewsChecker(BuildConfig.NEWS_RSS_URL));
+
+	// initialize the status checker
+	m_statusChecker.reset(new StatusChecker());
 
 	// and instances
 	auto InstDirSetting = m_settings->getSetting("InstanceDir");
+	// instance path: check for problems with '!' in instance path and warn the user in the log
+	// and rememer that we have to show him a dialog when the gui starts (if it does so)
+	QString instDir = MMC->settings()->get("InstanceDir").toString();
+	QLOG_INFO() << "Instance path              : " << instDir;
+	if (checkProblemticPathJava(QDir(instDir)))
+	{
+		QLOG_WARN()
+			<< "Your instance path contains \'!\' and this is known to cause java problems";
+	}
 	m_instances.reset(new InstanceList(InstDirSetting->get().toString(), this));
 	QLOG_INFO() << "Loading Instances...";
 	m_instances->loadList();
-	connect(InstDirSetting.get(), SIGNAL(settingChanged(const Setting &, QVariant)),
+	connect(InstDirSetting.get(), SIGNAL(SettingChanged(const Setting &, QVariant)),
 			m_instances.get(), SLOT(on_InstFolderChanged(const Setting &, QVariant)));
 
 	// and accounts
@@ -198,55 +239,25 @@ MultiMC::MultiMC(int &argc, char **argv, bool root_override)
 	// init the http meta cache
 	initHttpMetaCache();
 
-	// set up a basic autodetected proxy (system default)
-	QNetworkProxyFactory::setUseSystemConfiguration(true);
-
-	QLOG_INFO() << "Detecting system proxy settings...";
-	auto proxies = QNetworkProxyFactory::systemProxyForQuery();
-	if (proxies.size() == 1 && proxies[0].type() == QNetworkProxy::NoProxy)
-	{
-		QLOG_INFO() << "No proxy found.";
-	}
-	else
-		for (auto proxy : proxies)
-		{
-			QString proxyDesc;
-			if (proxy.type() == QNetworkProxy::NoProxy)
-			{
-				QLOG_INFO() << "Using no proxy is an option!";
-				continue;
-			}
-			switch (proxy.type())
-			{
-			case QNetworkProxy::DefaultProxy:
-				proxyDesc = "Default proxy: ";
-				break;
-			case QNetworkProxy::Socks5Proxy:
-				proxyDesc = "Socks5 proxy: ";
-				break;
-			case QNetworkProxy::HttpProxy:
-				proxyDesc = "HTTP proxy: ";
-				break;
-			case QNetworkProxy::HttpCachingProxy:
-				proxyDesc = "HTTP caching: ";
-				break;
-			case QNetworkProxy::FtpCachingProxy:
-				proxyDesc = "FTP caching: ";
-				break;
-			default:
-				proxyDesc = "DERP proxy: ";
-				break;
-			}
-			proxyDesc += QString("%3@%1:%2 pass %4")
-							 .arg(proxy.hostName())
-							 .arg(proxy.port())
-							 .arg(proxy.user())
-							 .arg(proxy.password());
-			QLOG_INFO() << proxyDesc;
-		}
-
 	// create the global network manager
 	m_qnam.reset(new QNetworkAccessManager(this));
+
+	// init proxy settings
+	updateProxySettings();
+
+	m_profilers.insert("jprofiler",
+					   std::shared_ptr<BaseProfilerFactory>(new JProfilerFactory()));
+	m_profilers.insert("jvisualvm",
+					   std::shared_ptr<BaseProfilerFactory>(new JVisualVMFactory()));
+	for (auto profiler : m_profilers.values())
+	{
+		profiler->registerSettings(m_settings.get());
+	}
+	m_tools.insert("mcedit", std::shared_ptr<BaseDetachedToolFactory>(new MCEditFactory()));
+	for (auto tool : m_tools.values())
+	{
+		tool->registerSettings(m_settings.get());
+	}
 
 	// launch instance, if that's what should be done
 	// WARNING: disabled until further notice
@@ -278,18 +289,20 @@ MultiMC::~MultiMC()
 
 void MultiMC::initTranslations()
 {
+	QLocale locale(m_settings->get("Language").toString());
+	QLocale::setDefault(locale);
+	QLOG_INFO() << "Your language is" << locale.bcp47Name();
 	m_qt_translator.reset(new QTranslator());
-	if (m_qt_translator->load("qt_" + QLocale::system().name(),
+	if (m_qt_translator->load("qt_" + locale.bcp47Name(),
 							  QLibraryInfo::location(QLibraryInfo::TranslationsPath)))
 	{
-		std::cout << "Loading Qt Language File for "
-				  << QLocale::system().name().toLocal8Bit().constData() << "...";
+		QLOG_DEBUG() << "Loading Qt Language File for"
+					 << locale.bcp47Name().toLocal8Bit().constData() << "...";
 		if (!installTranslator(m_qt_translator.get()))
 		{
-			std::cout << " failed.";
+			QLOG_ERROR() << "Loading Qt Language File failed.";
 			m_qt_translator.reset();
 		}
-		std::cout << std::endl;
 	}
 	else
 	{
@@ -297,17 +310,16 @@ void MultiMC::initTranslations()
 	}
 
 	m_mmc_translator.reset(new QTranslator());
-	if (m_mmc_translator->load("mmc_" + QLocale::system().name(),
-							   QDir("translations").absolutePath()))
+	if (m_mmc_translator->load("mmc_" + locale.bcp47Name(),
+							   MMC->staticData() + "/translations"))
 	{
-		std::cout << "Loading MMC Language File for "
-				  << QLocale::system().name().toLocal8Bit().constData() << "...";
+		QLOG_DEBUG() << "Loading MMC Language File for"
+					 << locale.bcp47Name().toLocal8Bit().constData() << "...";
 		if (!installTranslator(m_mmc_translator.get()))
 		{
-			std::cout << " failed.";
+			QLOG_ERROR() << "Loading MMC Language File failed.";
 			m_mmc_translator.reset();
 		}
-		std::cout << std::endl;
 	}
 	else
 	{
@@ -334,34 +346,78 @@ void MultiMC::initLogger()
 	QsLogging::Logger &logger = QsLogging::Logger::instance();
 	logger.setLoggingLevel(QsLogging::TraceLevel);
 	m_fileDestination = QsLogging::DestinationFactory::MakeFileDestination(logBase.arg(0));
-	m_debugDestination = QsLogging::DestinationFactory::MakeQDebugDestination();
+	m_debugDestination = QsLogging::DestinationFactory::MakeDebugOutputDestination();
 	logger.addDestination(m_fileDestination.get());
 	logger.addDestination(m_debugDestination.get());
 	// log all the things
 	logger.setLoggingLevel(QsLogging::TraceLevel);
+	loggerInitialized = true;
 }
+
+bool loggerInitialized = false;
 
 void MultiMC::initGlobalSettings()
 {
 	m_settings.reset(new INISettingsObject("multimc.cfg", this));
 	// Updates
-	m_settings->registerSetting("UpdateChannel", version().channel);
+	m_settings->registerSetting("UpdateChannel", BuildConfig.VERSION_CHANNEL);
 	m_settings->registerSetting("AutoUpdate", true);
-	
+	m_settings->registerSetting("IconTheme", QString("multimc"));
+
+	// Minecraft Sneaky Updates
+	m_settings->registerSetting("AutoUpdateMinecraftVersions", true);
+
 	// Notifications
 	m_settings->registerSetting("ShownNotifications", QString());
 
 	// FTB
 	m_settings->registerSetting("TrackFTBInstances", false);
+	QString ftbDataDefault;
 #ifdef Q_OS_LINUX
-	QString ftbDefault = QDir::home().absoluteFilePath(".ftblauncher");
+	QString ftbDefault = ftbDataDefault = QDir::home().absoluteFilePath(".ftblauncher");
 #elif defined(Q_OS_WIN32)
-	QString ftbDefault = PathCombine(QDir::homePath(), "AppData/Roaming/ftblauncher");
+	wchar_t buf[APPDATA_BUFFER_SIZE];
+	wchar_t newBuf[APPDATA_BUFFER_SIZE];
+	QString ftbDefault, newFtbDefault, oldFtbDefault;
+	if (!GetEnvironmentVariableW(L"LOCALAPPDATA", newBuf, APPDATA_BUFFER_SIZE))
+	{
+		QLOG_FATAL() << "Your LOCALAPPDATA folder is missing! If you are on windows, this "
+						"means your system is broken. If you aren't on windows, how the **** "
+						"are you running the windows build????";
+	}
+	else
+	{
+		newFtbDefault = QDir(QString::fromWCharArray(newBuf)).absoluteFilePath("ftblauncher");
+	}
+	if (!GetEnvironmentVariableW(L"APPDATA", buf, APPDATA_BUFFER_SIZE))
+	{
+		QLOG_FATAL() << "Your APPDATA folder is missing! If you are on windows, this means "
+						"your system is broken. If you aren't on windows, how the **** are you "
+						"running the windows build????";
+	}
+	else
+	{
+		oldFtbDefault = QDir(QString::fromWCharArray(buf)).absoluteFilePath("ftblauncher");
+	}
+	if (QFile::exists(QDir(newFtbDefault).absoluteFilePath("ftblaunch.cfg")))
+	{
+		QLOG_INFO() << "Old FTB setup";
+		ftbDefault = ftbDataDefault = oldFtbDefault;
+	}
+	else
+	{
+		QLOG_INFO() << "New FTB setup";
+		ftbDefault = oldFtbDefault;
+		ftbDataDefault = newFtbDefault;
+	}
 #elif defined(Q_OS_MAC)
-	QString ftbDefault =
+	QString ftbDefault = ftbDataDefault =
 		PathCombine(QDir::homePath(), "Library/Application Support/ftblauncher");
 #endif
+	m_settings->registerSetting("FTBLauncherDataRoot", ftbDataDefault);
 	m_settings->registerSetting("FTBLauncherRoot", ftbDefault);
+	QLOG_INFO() << "FTB Launcher paths:" << m_settings->get("FTBLauncherDataRoot").toString()
+				<< "and" << m_settings->get("FTBLauncherRoot").toString();
 
 	m_settings->registerSetting("FTBRoot");
 	if (m_settings->get("FTBRoot").isNull())
@@ -410,9 +466,14 @@ void MultiMC::initGlobalSettings()
 	// Editors
 	m_settings->registerSetting("JsonEditor", QString());
 
+	// Language
+	m_settings->registerSetting("Language", QLocale(QLocale::system().language()).bcp47Name());
+
 	// Console
 	m_settings->registerSetting("ShowConsole", true);
+	m_settings->registerSetting("RaiseConsole", true);
 	m_settings->registerSetting("AutoCloseConsole", true);
+	m_settings->registerSetting("LogPrePostOutput", true);
 
 	// Console Colors
 	//	m_settings->registerSetting("SysMessageColor", QColor(Qt::blue));
@@ -424,6 +485,13 @@ void MultiMC::initGlobalSettings()
 	m_settings->registerSetting({"MinecraftWinWidth", "MCWindowWidth"}, 854);
 	m_settings->registerSetting({"MinecraftWinHeight", "MCWindowHeight"}, 480);
 
+	// Proxy Settings
+	m_settings->registerSetting("ProxyType", "Default");
+	m_settings->registerSetting({"ProxyAddr", "ProxyHostName"}, "127.0.0.1");
+	m_settings->registerSetting("ProxyPort", 8080);
+	m_settings->registerSetting({"ProxyUser", "ProxyUsername"}, "");
+	m_settings->registerSetting({"ProxyPass", "ProxyPassword"}, "");
+
 	// Memory
 	m_settings->registerSetting({"MinMemAlloc", "MinMemoryAlloc"}, 512);
 	m_settings->registerSetting({"MaxMemAlloc", "MaxMemoryAlloc"}, 1024);
@@ -432,6 +500,7 @@ void MultiMC::initGlobalSettings()
 	// Java Settings
 	m_settings->registerSetting("JavaPath", "");
 	m_settings->registerSetting("LastHostname", "");
+	m_settings->registerSetting("JavaDetectionHack", "");
 	m_settings->registerSetting("JvmArgs", "");
 
 	// Custom Commands
@@ -452,6 +521,8 @@ void MultiMC::initGlobalSettings()
 	m_settings->registerSetting("ConsoleWindowGeometry", "");
 
 	m_settings->registerSetting("SettingsGeometry", "");
+
+	m_settings->registerSetting("PagedGeometry", "");
 }
 
 void MultiMC::initHttpMetaCache()
@@ -462,9 +533,82 @@ void MultiMC::initHttpMetaCache()
 	m_metacache->addBase("versions", QDir("versions").absolutePath());
 	m_metacache->addBase("libraries", QDir("libraries").absolutePath());
 	m_metacache->addBase("minecraftforge", QDir("mods/minecraftforge").absolutePath());
+	m_metacache->addBase("fmllibs", QDir("mods/minecraftforge/libs").absolutePath());
+	m_metacache->addBase("liteloader", QDir("mods/liteloader").absolutePath());
 	m_metacache->addBase("skins", QDir("accounts/skins").absolutePath());
 	m_metacache->addBase("root", QDir(root()).absolutePath());
 	m_metacache->Load();
+}
+
+void MultiMC::updateProxySettings()
+{
+	QString proxyTypeStr = settings()->get("ProxyType").toString();
+
+	// Get the proxy settings from the settings object.
+	QString addr = settings()->get("ProxyAddr").toString();
+	int port = settings()->get("ProxyPort").value<qint16>();
+	QString user = settings()->get("ProxyUser").toString();
+	QString pass = settings()->get("ProxyPass").toString();
+
+	// Set the application proxy settings.
+	if (proxyTypeStr == "SOCKS5")
+	{
+		QNetworkProxy::setApplicationProxy(
+			QNetworkProxy(QNetworkProxy::Socks5Proxy, addr, port, user, pass));
+	}
+	else if (proxyTypeStr == "HTTP")
+	{
+		QNetworkProxy::setApplicationProxy(
+			QNetworkProxy(QNetworkProxy::HttpProxy, addr, port, user, pass));
+	}
+	else if (proxyTypeStr == "None")
+	{
+		// If we have no proxy set, set no proxy and return.
+		QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::NoProxy));
+	}
+	else
+	{
+		// If we have "Default" selected, set Qt to use the system proxy settings.
+		QNetworkProxyFactory::setUseSystemConfiguration(true);
+	}
+
+	QLOG_INFO() << "Detecting proxy settings...";
+	QNetworkProxy proxy = QNetworkProxy::applicationProxy();
+	if (m_qnam.get())
+		m_qnam->setProxy(proxy);
+	QString proxyDesc;
+	if (proxy.type() == QNetworkProxy::NoProxy)
+	{
+		QLOG_INFO() << "Using no proxy is an option!";
+		return;
+	}
+	switch (proxy.type())
+	{
+	case QNetworkProxy::DefaultProxy:
+		proxyDesc = "Default proxy: ";
+		break;
+	case QNetworkProxy::Socks5Proxy:
+		proxyDesc = "Socks5 proxy: ";
+		break;
+	case QNetworkProxy::HttpProxy:
+		proxyDesc = "HTTP proxy: ";
+		break;
+	case QNetworkProxy::HttpCachingProxy:
+		proxyDesc = "HTTP caching: ";
+		break;
+	case QNetworkProxy::FtpCachingProxy:
+		proxyDesc = "FTP caching: ";
+		break;
+	default:
+		proxyDesc = "DERP proxy: ";
+		break;
+	}
+	proxyDesc += QString("%3@%1:%2 pass %4")
+					 .arg(proxy.hostName())
+					 .arg(proxy.port())
+					 .arg(proxy.user())
+					 .arg(proxy.password());
+	QLOG_INFO() << proxyDesc;
 }
 
 std::shared_ptr<IconList> MultiMC::icons()
@@ -494,6 +638,15 @@ std::shared_ptr<ForgeVersionList> MultiMC::forgelist()
 	return m_forgelist;
 }
 
+std::shared_ptr<LiteLoaderVersionList> MultiMC::liteloaderlist()
+{
+	if (!m_liteloaderlist)
+	{
+		m_liteloaderlist.reset(new LiteLoaderVersionList());
+	}
+	return m_liteloaderlist;
+}
+
 std::shared_ptr<MinecraftVersionList> MultiMC::minecraftlist()
 {
 	if (!m_minecraftlist)
@@ -512,34 +665,43 @@ std::shared_ptr<JavaVersionList> MultiMC::javalist()
 	return m_javalist;
 }
 
+std::shared_ptr<URNResolver> MultiMC::resolver()
+{
+	if (!m_resolver)
+	{
+		m_resolver.reset(new URNResolver());
+	}
+	return m_resolver;
+}
+
 void MultiMC::installUpdates(const QString updateFilesDir, UpdateFlags flags)
 {
 	// if we are going to update on exit, save the params now
-	if(flags & OnExit)
+	if (flags & OnExit)
 	{
 		m_updateOnExitPath = updateFilesDir;
 		m_updateOnExitFlags = flags & ~OnExit;
 		return;
 	}
 	// otherwise if there already were some params for on exit update, clear them and continue
-	else if(m_updateOnExitPath.size())
+	else if (m_updateOnExitPath.size())
 	{
 		m_updateOnExitFlags = None;
 		m_updateOnExitPath.clear();
 	}
 	QLOG_INFO() << "Installing updates.";
-	#ifdef WINDOWS
-		QString finishCmd = MMC->applicationFilePath();
-		QString updaterBinary = PathCombine(bin(), "updater.exe");
-	#elif LINUX
-		QString finishCmd = PathCombine(root(), "MultiMC");
-		QString updaterBinary = PathCombine(bin(), "updater");
-	#elif OSX
-		QString finishCmd = MMC->applicationFilePath();
-		QString updaterBinary = PathCombine(bin(), "updater");
-	#else
-		#error Unsupported operating system.
-	#endif
+#ifdef WINDOWS
+	QString finishCmd = MMC->applicationFilePath();
+	QString updaterBinary = PathCombine(bin(), "updater.exe");
+#elif LINUX
+	QString finishCmd = PathCombine(root(), "MultiMC");
+	QString updaterBinary = PathCombine(bin(), "updater");
+#elif OSX
+	QString finishCmd = MMC->applicationFilePath();
+	QString updaterBinary = PathCombine(bin(), "updater");
+#else
+#error Unsupported operating system.
+#endif
 
 	QStringList args;
 	// ./updater --install-dir $INSTALL_DIR --package-dir $UPDATEFILES_DIR --script
@@ -548,7 +710,7 @@ void MultiMC::installUpdates(const QString updateFilesDir, UpdateFlags flags)
 	args << "--package-dir" << updateFilesDir;
 	args << "--script" << PathCombine(updateFilesDir, "file_list.xml");
 	args << "--wait" << QString::number(MMC->applicationPid());
-	if(flags & DryRun)
+	if (flags & DryRun)
 		args << "--dry-run";
 	if (flags & RestartOnFinish)
 	{
@@ -558,7 +720,7 @@ void MultiMC::installUpdates(const QString updateFilesDir, UpdateFlags flags)
 	QLOG_INFO() << "Running updater with command" << updaterBinary << args.join(" ");
 	QFile::setPermissions(updaterBinary, (QFileDevice::Permission)0x7755);
 
-	if (!QProcess::startDetached(updaterBinary, args/*, root()*/))
+	if (!QProcess::startDetached(updaterBinary, args /*, root()*/))
 	{
 		QLOG_ERROR() << "Failed to start the updater process!";
 		return;
@@ -570,7 +732,7 @@ void MultiMC::installUpdates(const QString updateFilesDir, UpdateFlags flags)
 
 void MultiMC::onExit()
 {
-	if(m_updateOnExitPath.size())
+	if (m_updateOnExitPath.size())
 	{
 		installUpdates(m_updateOnExitPath, m_updateOnExitFlags);
 	}

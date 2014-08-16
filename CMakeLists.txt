@@ -1,73 +1,65 @@
 cmake_minimum_required(VERSION 2.8.9)
 
-IF(WIN32)
+string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${CMAKE_BUILD_DIR}" IS_IN_SOURCE_BUILD)
+if(IS_IN_SOURCE_BUILD)
+	message(AUTHOR_WARNING "You are building MultiMC in-source. This is NOT recommended!")
+endif()
+
+if(WIN32)
 	# In Qt 5.1+ we have our own main() function, don't autolink to qtmain on Windows
 	cmake_policy(SET CMP0020 OLD)
-ENDIF()
+endif()
 
 project(MultiMC)
 enable_testing()
 
 ######## Set CMake options ########
-SET(CMAKE_AUTOMOC ON)
-SET(CMAKE_INCLUDE_CURRENT_DIR ON)
-SET(FILES_TO_TRANSLATE )
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+set(FILES_TO_TRANSLATE )
 
 ######## Set module path ########
-SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/")
-SET(MMC_SRC "${PROJECT_SOURCE_DIR}")
-SET(MMC_BIN "${PROJECT_BINARY_DIR}")
+set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/")
+set(MMC_SRC "${PROJECT_SOURCE_DIR}")
+set(MMC_BIN "${PROJECT_BINARY_DIR}")
 
 # Output all executables and shared libs in the main build folder, not in subfolders.
-SET(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 
-IF(UNIX)
-	SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
-ENDIF()
+if(UNIX)
+	set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
+endif()
+
+set(CMAKE_JAVA_TARGET_OUTPUT_DIR ${PROJECT_BINARY_DIR}/jars)
 
 ######## Set compiler flags ########
-IF(APPLE)
-	message(STATUS "Using APPLE CMAKE_CXX_FLAGS")
-	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall")
-ELSEIF(UNIX)
-	# assume GCC, add C++0x/C++11 stuff
-	MESSAGE(STATUS "Using UNIX CMAKE_CXX_FLAGS")
-	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall")
-ELSEIF(MINGW)
-	MESSAGE(STATUS "Using MINGW CMAKE_CXX_FLAGS")
-	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++11 -Wall")
-ENDIF()
+include(UseCXX11)
+include(Coverage)
+set(CMAKE_CXX_FLAGS " -Wall ${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Werror=return-type")
 
-################################ INCLUDE LIBRARIES ################################
-
-######## 3rd Party Libs ########
+################################ 3rd Party Libs ################################
 
 # Find the required Qt parts
 find_package(Qt5Core REQUIRED)
 find_package(Qt5Widgets REQUIRED)
+find_package(Qt5Concurrent REQUIRED)
 find_package(Qt5Network REQUIRED)
 find_package(Qt5Test REQUIRED)
-find_package(Qt5Concurrent REQUIRED)
+find_package(Qt5Xml REQUIRED)
 find_package(Qt5LinguistTools REQUIRED)
 
 include_directories(
 	${Qt5Core_INCLUDE_DIRS}
 	${Qt5Widgets_INCLUDE_DIRS}
 	${Qt5Concurrent_INCLUDE_DIRS}
-	${Qt5Network_INCLUDE_DIRS}
 	${Qt5Test_INCLUDE_DIRS}
-  )
+	${Qt5Network_INCLUDE_DIRS}
+	${Qt5Xml_INCLUDE_DIRS}
+)
 
 # The Qt5 cmake files don't provide its install paths, so ask qmake.
-get_target_property(QMAKE_EXECUTABLE Qt5::qmake LOCATION)
-function(QUERY_QMAKE VAR RESULT)
-	exec_program(${QMAKE_EXECUTABLE} ARGS "-query ${VAR}" RETURN_VALUE return_code OUTPUT_VARIABLE output )
-	if(NOT return_code)
-		file(TO_CMAKE_PATH "${output}" output)
-		set(${RESULT} ${output} PARENT_SCOPE)
-	endif(NOT return_code)
-endfunction(QUERY_QMAKE)
-
+include(QMakeQuery)
 query_qmake(QT_INSTALL_PLUGINS QT_PLUGINS_DIR)
 query_qmake(QT_INSTALL_IMPORTS QT_IMPORTS_DIR)
 query_qmake(QT_INSTALL_LIBS QT_LIBS_DIR)
@@ -75,9 +67,171 @@ query_qmake(QT_HOST_DATA QT_DATA_DIR)
 set(QT_MKSPECS_DIR ${QT_DATA_DIR}/mkspecs)
 
 
-######## Included Libs ########
+################################ SET UP BUILD OPTIONS ################################
+
+######## Check endianness ########
+include(TestBigEndian)
+test_big_endian(BIGENDIAN)
+if(${BIGENDIAN})
+	add_definitions(-DMULTIMC_BIG_ENDIAN)
+endif(${BIGENDIAN})
+
+
+######## Dark magic crash reports ########
+option(MultiMC_HANDLE_SEGV "Handle fatal crashes and generate crash reports." OFF)
+set(CRASH_HANDLER_IMPL "")
+message(STATUS "Crash dumps are ${MultiMC_HANDLE_SEGV}")
+if (MultiMC_HANDLE_SEGV)
+	add_definitions(-DHANDLE_SEGV)
+	if (WIN32)
+		find_package(DbgHelp)
+		set(MultiMC_LINK_ADDITIONAL_LIBS "${MultiMC_LINK_ADDITIONAL_LIBS}dbghelp")
+		set(MultiMC_CRASH_HANDLER_EXTRA_H "WinBacktrace.h")
+		set(MultiMC_CRASH_HANDLER_EXTRA_CPP "WinBacktrace.cpp")
+	endif ()
+endif ()
+
+option(MultiMC_TEST_SEGV "Intentionally segfault sometimes to test crash handling." OFF)
+if (MultiMC_TEST_SEGV)
+	# TODO: Make this a unit test instead.
+	message(WARNING "You have enabled crash handler testing. MULTIMC WILL INTENTIONALLY CRASH ITSELF. Crashes should occur on exit and when the new instance button is pressed.")
+	add_definitions(-DTEST_SEGV)
+endif ()
+
+
+######## Set URLs ########
+set(MultiMC_NEWS_RSS_URL "http://multimc.org/rss.xml" CACHE STRING "URL to fetch MultiMC's news RSS feed from.")
+
+
+######## Set version numbers ########
+set(MultiMC_VERSION_MAJOR	 0)
+set(MultiMC_VERSION_MINOR	 4)
+set(MultiMC_VERSION_HOTFIX   2)
+
+# Build number
+set(MultiMC_VERSION_BUILD -1 CACHE STRING "Build number. -1 for no build number.")
+
+# Version type
+set(MultiMC_VERSION_TYPE "Custom" CACHE STRING "MultiMC's version type. This should be one of 'Custom', 'Release', 'ReleaseCandidate', or 'Development', depending on what type of version this is.")
+
+# Build platform.
+set(MultiMC_BUILD_PLATFORM "" CACHE STRING "A short string identifying the platform that this build was built for. Only used by the notification system and to display in the about dialog.")
+
+# Version channel
+set(MultiMC_VERSION_CHANNEL "" CACHE STRING "The current build's channel. Included in the version string.")
+
+# Channel list URL
+set(MultiMC_CHANLIST_URL "" CACHE STRING "URL for the channel list.")
+
+# Updater enabled?
+set(MultiMC_UPDATER false CACHE BOOL "Whether or not the update system is enabled. If this is enabled, you must also set MultiMC_CHANLIST_URL and MultiMC_VERSION_CHANNEL in order for it to work properly.")
+
+# Notification URL
+set(MultiMC_NOTIFICATION_URL "" CACHE STRING "URL for checking for notifications.")
+
+set(MultiMC_RELEASE_VERSION_NAME "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}")
+if(MultiMC_VERSION_HOTFIX GREATER 0)
+	set(MultiMC_RELEASE_VERSION_NAME "${MultiMC_RELEASE_VERSION_NAME}.${MultiMC_VERSION_HOTFIX}")
+endif()
+
+# Build a version string to display in the configure logs.
+if(MultiMC_VERSION_TYPE STREQUAL "Custom")
+	message(STATUS "Version Type: Custom")
+	set(MultiMC_VERSION_STRING "${MultiMC_RELEASE_VERSION_NAME}")
+elseif(MultiMC_VERSION_TYPE STREQUAL "Release")
+	message(STATUS "Version Type: Stable Release")
+	set(MultiMC_VERSION_STRING "${MultiMC_RELEASE_VERSION_NAME}")
+elseif(MultiMC_VERSION_TYPE STREQUAL "ReleaseCandidate")
+	message(STATUS "Version Type: Release Candidate")
+	set(MultiMC_VERSION_STRING "${MultiMC_RELEASE_VERSION_NAME}-rc${MultiMC_VERSION_BUILD}")
+elseif(MultiMC_VERSION_TYPE STREQUAL "Development")
+	message(STATUS "Version Type: Development")
+	set(MultiMC_VERSION_STRING "${MultiMC_RELEASE_VERSION_NAME}-dev${MultiMC_VERSION_BUILD}")
+else()
+	message(ERROR "Invalid build type.")
+endif()
+
+message(STATUS "MultiMC 5 Version: ${MultiMC_VERSION_STRING}")
+
+# If the update system is enabled, make sure MultiMC_CHANLIST_URL and MultiMC_VERSION_CHANNEL are set.
+if(MultiMC_UPDATER)
+	if(MultiMC_VERSION_CHANNEL STREQUAL "")
+		message(FATAL_ERROR "Update system is enabled, but MultiMC_VERSION_CHANNEL is not set.\n"
+				"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
+	endif()
+	if(MultiMC_CHANLIST_URL STREQUAL "")
+	message(FATAL_ERROR "Update system is enabled, but MultiMC_CHANLIST_URL is not set.\n"
+				"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
+	endif()
+	if(MultiMC_VERSION_BUILD LESS 0)
+	message(FATAL_ERROR "Update system is enabled, but MultiMC_VERSION_BUILD is not set.\n"
+				"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
+	endif()
+	message(STATUS "Updater is enabled. Channel list URL: ${MultiMC_CHANLIST_URL}")
+endif()
+
+#### Updater-related build config options ####
+option(MultiMC_UPDATER_DRY_RUN "Enable updater dry-run mode -- for updater development." OFF)
+option(MultiMC_UPDATER_FORCE_LOCAL "Do not download updated updater -- for updater development." OFF)
+
+if(MultiMC_UPDATER_DRY_RUN)
+	set(MultiMC_UPDATER_DRY_RUN_value "true")
+else()
+	set(MultiMC_UPDATER_DRY_RUN_value "false")
+endif()
+
+if(MultiMC_UPDATER_FORCE_LOCAL)
+	set(MultiMC_UPDATER_FORCE_LOCAL_value "true")
+else()
+	set(MultiMC_UPDATER_FORCE_LOCAL_value "false")
+endif()
+
+#### Custom target to just print the version.
+add_custom_target(version echo "Version: ${MultiMC_VERSION_STRING}")
+
+#### Check the current Git commit
+include(GitFunctions)
+git_run(COMMAND rev-parse HEAD DEFAULT "Unknown" OUTPUT_VAR MultiMC_GIT_COMMIT)
+message(STATUS "Git commit: ${MultiMC_GIT_COMMIT}")
+
+######## Configure header ########
+configure_file("${PROJECT_SOURCE_DIR}/BuildConfig.cpp.in" "${PROJECT_BINARY_DIR}/BuildConfig.cpp")
+
+######## Packaging/install paths setup ########
+
+if(UNIX AND APPLE)
+	set(BINARY_DEST_DIR MultiMC.app/Contents/MacOS)
+	set(PLUGIN_DEST_DIR MultiMC.app/Contents/MacOS)
+	set(QTCONF_DEST_DIR MultiMC.app/Contents/Resources)
+	set(APPS "\${CMAKE_INSTALL_PREFIX}/MultiMC.app")
+
+	set(MACOSX_BUNDLE_BUNDLE_NAME "MultiMC")
+	set(MACOSX_BUNDLE_INFO_STRING "MultiMC Minecraft launcher and management utility.")
+	set(MACOSX_BUNDLE_GUI_IDENTIFIER "org.multimc.MultiMC5")
+	set(MACOSX_BUNDLE_BUNDLE_VERSION "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
+	set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
+	set(MACOSX_BUNDLE_LONG_VERSION_STRING "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
+	set(MACOSX_BUNDLE_ICON_FILE MultiMC.icns)
+	set(MACOSX_BUNDLE_COPYRIGHT "Copyright 2013 MultiMC Contributors")
+elseif(UNIX)
+	set(BINARY_DEST_DIR bin)
+	set(PLUGIN_DEST_DIR plugins)
+	set(QTCONF_DEST_DIR .)
+	set(APPS "\${CMAKE_INSTALL_PREFIX}/bin/MultiMC")
+elseif(WIN32)
+	set(BINARY_DEST_DIR .)
+	set(PLUGIN_DEST_DIR .)
+	set(QTCONF_DEST_DIR .)
+	set(APPS "\${CMAKE_INSTALL_PREFIX}/MultiMC.exe")
+endif()
+
+# directories to look for dependencies
+set(DIRS "${QT_LIBS_DIR}")
+
+################################ Included Libs ################################
 
 # Add quazip
+add_definitions(-DQUAZIP_STATIC)
 add_subdirectory(depends/quazip)
 include_directories(depends/quazip)
 
@@ -96,543 +250,585 @@ include_directories(${PACK200_INCLUDE_DIR})
 ######## MultiMC Libs ########
 
 # Add the util library.
+add_definitions(-DLIBUTIL_STATIC)
 add_subdirectory(depends/util)
 include_directories(${LIBUTIL_INCLUDE_DIR})
 
-# Add the settings library.
-add_subdirectory(depends/settings)
-include_directories(${LIBSETTINGS_INCLUDE_DIR})
-
-# Add the group view library.
-add_subdirectory(depends/groupview)
-include_directories(${LIBGROUPVIEW_INCLUDE_DIR})
-
 # Add the updater
 add_subdirectory(mmc_updater)
-
-################################ SET UP BUILD OPTIONS ################################
-
-######## Check endianness ########
-INCLUDE(TestBigEndian)
-TEST_BIG_ENDIAN(BIGENDIAN)
-IF(${BIGENDIAN})
-	ADD_DEFINITIONS(-DMULTIMC_BIG_ENDIAN)
-ENDIF(${BIGENDIAN})
-
-
-######## Set URLs ########
-
-SET(MultiMC_NEWS_RSS_URL "http://multimc.org/rss.xml" CACHE STRING "URL to fetch MultiMC's news RSS feed from.")
-
-
-######## Set version numbers ########
-SET(MultiMC_VERSION_MAJOR		0)
-SET(MultiMC_VERSION_MINOR		0)
-
-# Build number
-SET(MultiMC_VERSION_BUILD -1 CACHE STRING "Build number. -1 for no build number.")
-
-# Build type
-SET(MultiMC_VERSION_BUILD_TYPE "custombuild" CACHE STRING "Build type. If this is set, it is appended to the end of the version string with a dash (<version string>-<build type>. It is not used for anything other than indicating in the version string what type of build this is (eg 'lin64').")
-
-# Version channel
-SET(MultiMC_VERSION_CHANNEL "" CACHE STRING "The current build's channel. Included in the version string.")
-
-# Channel list URL
-SET(MultiMC_CHANLIST_URL "" CACHE STRING "URL for the channel list.")
-
-# Updater enabled?
-SET(MultiMC_UPDATER false CACHE BOOL "Whether or not the update system is enabled. If this is enabled, you must also set MultiMC_CHANLIST_URL and MultiMC_VERSION_CHANNEL in order for it to work properly.")
-
-# Notification URL
-SET(MultiMC_NOTIFICATION_URL "" CACHE STRING "URL for checking for notifications.")
-
-# Build a version string to display in the configure logs.
-SET(MultiMC_VERSION_STRING "5.${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}")
-IF (MultiMC_VERSION_BUILD GREATER -1)
-	SET(MultiMC_VERSION_STRING "${MultiMC_VERSION_STRING}.${MultiMC_VERSION_BUILD}")
-ENDIF ()
-IF (NOT MultiMC_VERSION_CHANNEL STREQUAL "")
-	SET(MultiMC_VERSION_STRING "${MultiMC_VERSION_STRING}-${MultiMC_VERSION_CHANNEL}")
-ENDIF ()
-IF (NOT MultiMC_VERSION_BUILD_TYPE STREQUAL "")
-	SET(MultiMC_VERSION_STRING "${MultiMC_VERSION_STRING}-${MultiMC_VERSION_BUILD_TYPE}")
-ENDIF ()
-
-MESSAGE(STATUS "MultiMC 5 version ${MultiMC_VERSION_STRING}")
-
-# If the update system is enabled, make sure MultiMC_CHANLIST_URL and MultiMC_VERSION_CHANNEL are set.
-IF (MultiMC_UPDATER)
-	IF (MultiMC_VERSION_CHANNEL STREQUAL "")
-		MESSAGE(FATAL_ERROR "Update system is enabled, but MultiMC_VERSION_CHANNEL is not set.\n"
-							"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
-	ENDIF ()
-	IF (MultiMC_CHANLIST_URL STREQUAL "")
-		MESSAGE(FATAL_ERROR "Update system is enabled, but MultiMC_CHANLIST_URL is not set.\n"
-							"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
-	ENDIF ()
-	IF (MultiMC_VERSION_BUILD LESS 0)
-		MESSAGE(FATAL_ERROR "Update system is enabled, but MultiMC_VERSION_BUILD is not set.\n"
-							"Please ensure the CMake variables MultiMC_VERSION_CHANNEL, MultiMC_CHANLIST_URL, and MultiMC_VERSION_BUILD are set.")
-	ENDIF ()
-
-	MESSAGE(STATUS "Updater is enabled. Channel list URL: ${MultiMC_CHANLIST_URL}")
-ENDIF ()
-
-#### Custom target to just print the version.
-ADD_CUSTOM_TARGET(version echo "Version: ${MultiMC_VERSION_STRING}")
-
-#### Check the current Git commit
-execute_process(COMMAND git rev-parse HEAD
-	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-	RESULT_VARIABLE GIT_COMMIT_CHECK_RESULTVAR
-	OUTPUT_VARIABLE GIT_COMMIT_CHECK_OUTVAR
-	OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-IF(GIT_COMMIT_CHECK_RESULTVAR EQUAL 0)
-	SET(MultiMC_GIT_COMMIT "${GIT_COMMIT_CHECK_OUTVAR}")
-	MESSAGE(STATUS "Git commit: ${MultiMC_GIT_COMMIT}")
-ELSE()
-	SET(MultiMC_GIT_COMMIT "Unknown")
-	MESSAGE(STATUS "Failed to check Git commit. ${GIT_COMMIT_CHECK_RESULTVAR}")
-ENDIF()
-
-######## Configure header ########
-configure_file("${PROJECT_SOURCE_DIR}/config.h.in" "${PROJECT_BINARY_DIR}/include/config.h")
-
-
-######## Other Stuff ########
-
-ADD_DEFINITIONS(-DQUAZIP_STATIC)
-ADD_DEFINITIONS(-DLIBSETTINGS_STATIC)
-ADD_DEFINITIONS(-DLIBUTIL_STATIC)
-ADD_DEFINITIONS(-DLIBGROUPVIEW_STATIC)
 
 ################################ FILES ################################
 
 ######## Sources and headers ########
 SET(MULTIMC_SOURCES
-# Application base
-MultiMC.h
-MultiMC.cpp
-MultiMCVersion.h
+	# Application base
+	MultiMC.h
+	MultiMC.cpp
+	MMCError.h
+	BuildConfig.h
+	${PROJECT_BINARY_DIR}/BuildConfig.cpp
 
-# Logging
-logger/QsDebugOutput.cpp
-logger/QsDebugOutput.h
-logger/QsLog.cpp
-logger/QsLog.h
-logger/QsLogDest.cpp
-logger/QsLogDest.h
+	# Crash handling
+	HandleCrash.h
+	HandleCrash.cpp
+	${MultiMC_CRASH_HANDLER_EXTRA_H} # Extra platform specific stuff
+	${MultiMC_CRASH_HANDLER_EXTRA_CPP}
 
-# GUI - windows
-gui/MainWindow.h
-gui/MainWindow.cpp
-gui/ConsoleWindow.h
-gui/ConsoleWindow.cpp
+	# Logging
+	logger/QsDebugOutput.cpp
+	logger/QsDebugOutput.h
+	logger/QsLog.cpp
+	logger/QsLog.h
+	logger/QsLogDest.cpp
+	logger/QsLogDest.h
 
-# GUI - dialogs
-gui/dialogs/SettingsDialog.h
-gui/dialogs/SettingsDialog.cpp
-gui/dialogs/CopyInstanceDialog.h
-gui/dialogs/CopyInstanceDialog.cpp
-gui/dialogs/dialogs/
-gui/dialogs/NewInstanceDialog.cpp
-gui/dialogs/ProgressDialog.h
-gui/dialogs/ProgressDialog.cpp
-gui/dialogs/AboutDialog.h
-gui/dialogs/AboutDialog.cpp
-gui/dialogs/VersionSelectDialog.h
-gui/dialogs/VersionSelectDialog.cpp
-gui/dialogs/LwjglSelectDialog.h
-gui/dialogs/LwjglSelectDialog.cpp
-gui/dialogs/InstanceSettings.h
-gui/dialogs/InstanceSettings.cpp
-gui/dialogs/IconPickerDialog.h
-gui/dialogs/IconPickerDialog.cpp
-gui/dialogs/LegacyModEditDialog.h
-gui/dialogs/LegacyModEditDialog.cpp
-gui/dialogs/OneSixModEditDialog.h
-gui/dialogs/OneSixModEditDialog.cpp
-gui/dialogs/ModEditDialogCommon.h
-gui/dialogs/ModEditDialogCommon.cpp
-gui/dialogs/EditNotesDialog.h
-gui/dialogs/EditNotesDialog.cpp
-gui/dialogs/CustomMessageBox.h
-gui/dialogs/CustomMessageBox.cpp
-gui/dialogs/EditAccountDialog.h
-gui/dialogs/EditAccountDialog.cpp
-gui/dialogs/AccountListDialog.h
-gui/dialogs/AccountListDialog.cpp
-gui/dialogs/AccountSelectDialog.h
-gui/dialogs/AccountSelectDialog.cpp
-gui/dialogs/UpdateDialog.h
-gui/dialogs/UpdateDialog.cpp
+	# GUI - general utilities
+	gui/GuiUtil.h
+	gui/GuiUtil.cpp
+	gui/ColumnResizer.h
+	gui/ColumnResizer.cpp
 
-# GUI - widgets
-gui/widgets/InstanceDelegate.h
-gui/widgets/InstanceDelegate.cpp
-gui/widgets/ModListView.h
-gui/widgets/ModListView.cpp
-gui/widgets/LabeledToolButton.h
-gui/widgets/LabeledToolButton.cpp
-gui/widgets/MCModInfoFrame.h
-gui/widgets/MCModInfoFrame.cpp
+	# GUI - windows
+	gui/MainWindow.h
+	gui/MainWindow.cpp
+	gui/ConsoleWindow.h
+	gui/ConsoleWindow.cpp
 
-# Base classes and infrastructure
-logic/BaseVersion.h
-logic/MinecraftVersion.h
-logic/InstanceFactory.h
-logic/InstanceFactory.cpp
-logic/BaseInstance.h
-logic/BaseInstance.cpp
-logic/BaseInstance_p.h
+	# GUI - page dialog pages
+	gui/pages/BasePage.h
+	gui/pages/VersionPage.cpp
+	gui/pages/VersionPage.h
+	gui/pages/TexturePackPage.h
+	gui/pages/ResourcePackPage.h
+	gui/pages/ModFolderPage.cpp
+	gui/pages/ModFolderPage.h
+	gui/pages/NotesPage.cpp
+	gui/pages/NotesPage.h
+	gui/pages/LegacyUpgradePage.cpp
+	gui/pages/LegacyUpgradePage.h
+	gui/pages/LegacyJarModPage.cpp
+	gui/pages/LegacyJarModPage.h
+	gui/pages/LogPage.cpp
+	gui/pages/LogPage.h
+	gui/pages/InstanceSettingsPage.cpp
+	gui/pages/InstanceSettingsPage.h
+	gui/pages/ScreenshotsPage.cpp
+	gui/pages/ScreenshotsPage.h
+	gui/pages/OtherLogsPage.cpp
+	gui/pages/OtherLogsPage.h
 
-logic/MinecraftProcess.h
-logic/MinecraftProcess.cpp
-logic/Mod.h
-logic/Mod.cpp
-logic/ModList.h
-logic/ModList.cpp
+	# GUI - global settings pages
+	gui/pages/global/AccountListPage.cpp
+	gui/pages/global/AccountListPage.h
+	gui/pages/global/ExternalToolsPage.cpp
+	gui/pages/global/ExternalToolsPage.h
+	gui/pages/global/JavaPage.cpp
+	gui/pages/global/JavaPage.h
+	gui/pages/global/MinecraftPage.cpp
+	gui/pages/global/MinecraftPage.h
+	gui/pages/global/MultiMCPage.cpp
+	gui/pages/global/MultiMCPage.h
+	gui/pages/global/ProxyPage.cpp
+	gui/pages/global/ProxyPage.h
 
-# Basic instance launcher for starting from terminal
-logic/InstanceLauncher.h
-logic/InstanceLauncher.cpp
-
-# network stuffs
-logic/net/NetAction.h
-logic/net/MD5EtagDownload.h
-logic/net/MD5EtagDownload.cpp
-logic/net/ByteArrayDownload.h
-logic/net/ByteArrayDownload.cpp
-logic/net/CacheDownload.h
-logic/net/CacheDownload.cpp
-logic/net/ForgeMirrors.h
-logic/net/ForgeMirrors.cpp
-logic/net/ForgeXzDownload.h
-logic/net/ForgeXzDownload.cpp
-logic/net/NetJob.h
-logic/net/NetJob.cpp
-logic/net/HttpMetaCache.h
-logic/net/HttpMetaCache.cpp
-logic/net/PasteUpload.h
-logic/net/PasteUpload.cpp
-logic/net/URLConstants.h
-
-# Yggdrasil login stuff
-logic/auth/MojangAccountList.h
-logic/auth/MojangAccountList.cpp
-logic/auth/MojangAccount.h
-logic/auth/MojangAccount.cpp
-logic/auth/YggdrasilTask.h
-logic/auth/YggdrasilTask.cpp
-logic/auth/flows/AuthenticateTask.h
-logic/auth/flows/AuthenticateTask.cpp
-logic/auth/flows/RefreshTask.cpp
-logic/auth/flows/RefreshTask.cpp
-logic/auth/flows/ValidateTask.h
-logic/auth/flows/ValidateTask.cpp
-
-# Update system
-logic/updater/UpdateChecker.h
-logic/updater/UpdateChecker.cpp
-logic/updater/DownloadUpdateTask.h
-logic/updater/DownloadUpdateTask.cpp
-logic/updater/NotificationChecker.h
-logic/updater/NotificationChecker.cpp
-
-# News System
-logic/news/NewsChecker.h
-logic/news/NewsChecker.cpp
-logic/news/NewsEntry.h
-logic/news/NewsEntry.cpp
-
-# legacy instances
-logic/LegacyInstance.h
-logic/LegacyInstance.cpp
-logic/LegacyInstance_p.h
-logic/LegacyUpdate.h
-logic/LegacyUpdate.cpp
-logic/LegacyForge.h
-logic/LegacyForge.cpp
-
-# 1.6 instances
-logic/OneSixInstance.h
-logic/OneSixInstance.cpp
-logic/OneSixInstance_p.h
-logic/OneSixUpdate.h
-logic/OneSixUpdate.cpp
-logic/OneSixVersion.h
-logic/OneSixVersion.cpp
-logic/OneSixLibrary.h
-logic/OneSixLibrary.cpp
-logic/OneSixRule.h
-logic/OneSixRule.cpp
-logic/OpSys.h
-logic/OpSys.cpp
-logic/ForgeInstaller.h
-logic/ForgeInstaller.cpp
-logic/LiteLoaderInstaller.h
-logic/LiteLoaderInstaller.cpp
-
-# Nostalgia
-logic/NostalgiaInstance.h
-logic/NostalgiaInstance.cpp
-
-# FTB
-logic/OneSixFTBInstance.h
-logic/OneSixFTBInstance.cpp
-logic/LegacyFTBInstance.h
-logic/LegacyFTBInstance.cpp
-
-# Lists
-logic/lists/InstanceList.h
-logic/lists/InstanceList.cpp
-logic/lists/BaseVersionList.h
-logic/lists/BaseVersionList.cpp
-logic/lists/MinecraftVersionList.h
-logic/lists/MinecraftVersionList.cpp
-logic/lists/LwjglVersionList.h
-logic/lists/LwjglVersionList.cpp
-logic/lists/ForgeVersionList.h
-logic/lists/ForgeVersionList.cpp
-logic/lists/JavaVersionList.h
-logic/lists/JavaVersionList.cpp
-
-# Icons
-logic/icons/MMCIcon.h
-logic/icons/MMCIcon.cpp
-logic/icons/IconList.h
-logic/icons/IconList.cpp
+	# GUI - dialogs
+	gui/dialogs/AboutDialog.cpp
+	gui/dialogs/AboutDialog.h
+	gui/dialogs/AccountSelectDialog.cpp
+	gui/dialogs/AccountSelectDialog.h
+	gui/dialogs/CopyInstanceDialog.cpp
+	gui/dialogs/CopyInstanceDialog.h
+	gui/dialogs/CustomMessageBox.cpp
+	gui/dialogs/CustomMessageBox.h
+	gui/dialogs/EditAccountDialog.cpp
+	gui/dialogs/EditAccountDialog.h
+	gui/dialogs/IconPickerDialog.cpp
+	gui/dialogs/IconPickerDialog.h
+	gui/dialogs/LoginDialog.cpp
+	gui/dialogs/LoginDialog.h
+	gui/dialogs/LwjglSelectDialog.cpp
+	gui/dialogs/LwjglSelectDialog.h
+	gui/dialogs/ModEditDialogCommon.cpp
+	gui/dialogs/ModEditDialogCommon.h
+	gui/dialogs/NewInstanceDialog.cpp
+	gui/dialogs/NewInstanceDialog.h
+	gui/dialogs/NotificationDialog.cpp
+	gui/dialogs/NotificationDialog.h
+	gui/pagedialog/PageDialog.cpp
+	gui/pagedialog/PageDialog.h
+	gui/dialogs/ProgressDialog.cpp
+	gui/dialogs/ProgressDialog.h
+	gui/dialogs/UpdateDialog.cpp
+	gui/dialogs/UpdateDialog.h
+	gui/dialogs/VersionSelectDialog.cpp
+	gui/dialogs/VersionSelectDialog.h
 
 
-# misc model/view
-logic/EnabledItemFilter.h
-logic/EnabledItemFilter.cpp
+	# GUI - widgets
+	gui/widgets/Common.cpp
+	gui/widgets/Common.h
+	gui/widgets/IconLabel.cpp
+	gui/widgets/IconLabel.h
+	gui/widgets/LabeledToolButton.cpp
+	gui/widgets/LabeledToolButton.h
+	gui/widgets/LineSeparator.cpp
+	gui/widgets/LineSeparator.h
+	gui/widgets/MCModInfoFrame.cpp
+	gui/widgets/MCModInfoFrame.h
+	gui/widgets/ModListView.cpp
+	gui/widgets/ModListView.h
+	gui/widgets/PageContainer.cpp
+	gui/widgets/PageContainer.h
+	gui/widgets/PageContainer_p.h
+	gui/widgets/ServerStatus.cpp
+	gui/widgets/ServerStatus.h
+	gui/widgets/VersionListView.cpp
+	gui/widgets/VersionListView.h
 
-# Tasks
-logic/tasks/ProgressProvider.h
-logic/tasks/Task.h
-logic/tasks/Task.cpp
-logic/tasks/ThreadTask.h
-logic/tasks/ThreadTask.cpp
-logic/tasks/SequentialTask.h
-logic/tasks/SequentialTask.cpp
 
-# Utilities
-logic/JavaChecker.h
-logic/JavaChecker.cpp
-logic/JavaUtils.h
-logic/JavaUtils.cpp
-logic/NagUtils.h
-logic/NagUtils.cpp
-logic/SkinUtils.h
-logic/SkinUtils.cpp
-logic/JavaCheckerJob.h
-logic/JavaCheckerJob.cpp
+	# GUI - instance group view
+	gui/groupview/GroupedProxyModel.cpp
+	gui/groupview/GroupedProxyModel.h
+	gui/groupview/GroupView.cpp
+	gui/groupview/GroupView.h
+	gui/groupview/InstanceDelegate.cpp
+	gui/groupview/InstanceDelegate.h
+	gui/groupview/VisualGroup.cpp
+	gui/groupview/VisualGroup.h
 
-# Assets
-logic/assets/AssetsMigrateTask.h
-logic/assets/AssetsMigrateTask.cpp
-logic/assets/AssetsUtils.h
-logic/assets/AssetsUtils.cpp
+	# LOGIC - Base classes and infrastructure
+	logic/BaseVersion.h
+	logic/InstanceFactory.h
+	logic/InstanceFactory.cpp
+	logic/BaseInstance.h
+	logic/BaseInstance.cpp
+	logic/BaseInstance_p.h
+	logic/Mod.h
+	logic/Mod.cpp
+	logic/ModList.h
+	logic/ModList.cpp
+	
+	# sets and maps for deciding based on versions
+	logic/VersionFilterData.h
+	logic/VersionFilterData.cpp
+
+	# Instance launch
+	logic/InstanceLauncher.h
+	logic/InstanceLauncher.cpp
+	logic/MinecraftProcess.h
+	logic/MinecraftProcess.cpp
+
+	# URN parser/resolver
+	logic/URNResolver.cpp
+	logic/URNResolver.h
+
+	# Annoying nag screen logic
+	logic/NagUtils.h
+	logic/NagUtils.cpp
+
+	# Player skin utilities
+	logic/SkinUtils.h
+	logic/SkinUtils.cpp
+	
+	# misc model filter
+	logic/EnabledItemFilter.h
+	logic/EnabledItemFilter.cpp
+
+	# JSON parsing helpers
+	logic/MMCJson.h
+	logic/MMCJson.cpp
+
+	# RW lock protected map
+	logic/RWStorage.h
+
+	# A variable that has an implicit default value and keeps track of changes
+	logic/DefaultVariable.h
+
+	# network stuffs
+	logic/net/NetAction.h
+	logic/net/MD5EtagDownload.h
+	logic/net/MD5EtagDownload.cpp
+	logic/net/ByteArrayDownload.h
+	logic/net/ByteArrayDownload.cpp
+	logic/net/CacheDownload.h
+	logic/net/CacheDownload.cpp
+	logic/net/NetJob.h
+	logic/net/NetJob.cpp
+	logic/net/HttpMetaCache.h
+	logic/net/HttpMetaCache.cpp
+	logic/net/PasteUpload.h
+	logic/net/PasteUpload.cpp
+	logic/net/URLConstants.h
+	logic/net/URLConstants.cpp
+
+	# Yggdrasil login stuff
+	logic/auth/AuthSession.h
+	logic/auth/AuthSession.cpp
+	logic/auth/MojangAccountList.h
+	logic/auth/MojangAccountList.cpp
+	logic/auth/MojangAccount.h
+	logic/auth/MojangAccount.cpp
+	logic/auth/YggdrasilTask.h
+	logic/auth/YggdrasilTask.cpp
+	logic/auth/flows/AuthenticateTask.h
+	logic/auth/flows/AuthenticateTask.cpp
+	logic/auth/flows/RefreshTask.cpp
+	logic/auth/flows/RefreshTask.cpp
+	logic/auth/flows/ValidateTask.h
+	logic/auth/flows/ValidateTask.cpp
+
+	# Update system
+	logic/updater/UpdateChecker.h
+	logic/updater/UpdateChecker.cpp
+	logic/updater/DownloadUpdateTask.h
+	logic/updater/DownloadUpdateTask.cpp
+	logic/updater/NotificationChecker.h
+	logic/updater/NotificationChecker.cpp
+
+	# News System
+	logic/news/NewsChecker.h
+	logic/news/NewsChecker.cpp
+	logic/news/NewsEntry.h
+	logic/news/NewsEntry.cpp
+
+	# Status system
+	logic/status/StatusChecker.h
+	logic/status/StatusChecker.cpp
+
+	# legacy instances
+	logic/LegacyInstance.h
+	logic/LegacyInstance.cpp
+	logic/LegacyInstance_p.h
+	logic/LegacyUpdate.h
+	logic/LegacyUpdate.cpp
+
+	# OneSix instances
+	logic/OneSixUpdate.h
+	logic/OneSixUpdate.cpp
+	logic/OneSixInstance.h
+	logic/OneSixInstance.cpp
+	logic/OneSixInstance_p.h
+
+	# OneSix version json infrastructure
+	logic/minecraft/GradleSpecifier.h
+	logic/minecraft/InstanceVersion.cpp
+	logic/minecraft/InstanceVersion.h
+	logic/minecraft/JarMod.cpp
+	logic/minecraft/JarMod.h
+	logic/minecraft/MinecraftVersion.cpp
+	logic/minecraft/MinecraftVersion.h
+	logic/minecraft/MinecraftVersionList.cpp
+	logic/minecraft/MinecraftVersionList.h
+	logic/minecraft/OneSixLibrary.cpp
+	logic/minecraft/OneSixLibrary.h
+	logic/minecraft/OneSixRule.cpp
+	logic/minecraft/OneSixRule.h
+	logic/minecraft/OpSys.cpp
+	logic/minecraft/OpSys.h
+	logic/minecraft/ParseUtils.cpp
+	logic/minecraft/ParseUtils.h
+	logic/minecraft/RawLibrary.cpp
+	logic/minecraft/RawLibrary.h
+	logic/minecraft/VersionBuilder.cpp
+	logic/minecraft/VersionBuilder.h
+	logic/minecraft/VersionBuildError.h
+	logic/minecraft/VersionFile.cpp
+	logic/minecraft/VersionFile.h
+	logic/minecraft/VersionPatch.h
+	logic/minecraft/VersionSource.h
+
+	# A Recursive file system watcher
+	logic/RecursiveFileSystemWatcher.h
+	logic/RecursiveFileSystemWatcher.cpp
+
+	# Various base classes
+	logic/BaseInstaller.h
+	logic/BaseInstaller.cpp
+	logic/BaseVersionList.h
+	logic/BaseVersionList.cpp
+
+	logic/InstanceList.h
+	logic/InstanceList.cpp
+	logic/LwjglVersionList.h
+	logic/LwjglVersionList.cpp
+
+	# FTB
+	logic/OneSixFTBInstance.h
+	logic/OneSixFTBInstance.cpp
+	logic/LegacyFTBInstance.h
+	logic/LegacyFTBInstance.cpp
+
+	# the screenshots feature
+	logic/screenshots/Screenshot.h
+	logic/screenshots/ImgurUpload.h
+	logic/screenshots/ImgurUpload.cpp
+	logic/screenshots/ImgurAlbumCreation.h
+	logic/screenshots/ImgurAlbumCreation.cpp
+
+	# Icons
+	logic/icons/MMCIcon.h
+	logic/icons/MMCIcon.cpp
+	logic/icons/IconList.h
+	logic/icons/IconList.cpp
+
+	# Tasks
+	logic/tasks/ProgressProvider.h
+	logic/tasks/Task.h
+	logic/tasks/Task.cpp
+	logic/tasks/ThreadTask.h
+	logic/tasks/ThreadTask.cpp
+	logic/tasks/SequentialTask.h
+	logic/tasks/SequentialTask.cpp
+
+	# Settings
+	logic/settings/INIFile.cpp
+	logic/settings/INIFile.h
+	logic/settings/INISettingsObject.cpp
+	logic/settings/INISettingsObject.h
+	logic/settings/OverrideSetting.cpp
+	logic/settings/OverrideSetting.h
+	logic/settings/Setting.cpp
+	logic/settings/Setting.h
+	logic/settings/SettingsObject.cpp
+	logic/settings/SettingsObject.h
+
+	# Java related code
+	logic/java/JavaChecker.h
+	logic/java/JavaChecker.cpp
+	logic/java/JavaUtils.h
+	logic/java/JavaUtils.cpp
+	logic/java/JavaVersionList.h
+	logic/java/JavaVersionList.cpp
+	logic/java/JavaCheckerJob.h
+	logic/java/JavaCheckerJob.cpp
+
+	# Assets
+	logic/assets/AssetsMigrateTask.h
+	logic/assets/AssetsMigrateTask.cpp
+	logic/assets/AssetsUtils.h
+	logic/assets/AssetsUtils.cpp
+
+	# Tools
+	logic/tools/BaseExternalTool.h
+	logic/tools/BaseExternalTool.cpp
+	logic/tools/MCEditTool.h
+	logic/tools/MCEditTool.cpp
+	logic/tools/BaseProfiler.h
+	logic/tools/BaseProfiler.cpp
+	logic/tools/JProfiler.h
+	logic/tools/JProfiler.cpp
+	logic/tools/JVisualVM.h
+	logic/tools/JVisualVM.cpp
+	
+	# Forge and all things forge related
+	logic/forge/ForgeVersion.h
+	logic/forge/ForgeVersion.cpp
+	logic/forge/ForgeVersionList.h
+	logic/forge/ForgeVersionList.cpp
+	logic/forge/ForgeMirror.h
+	logic/forge/ForgeMirrors.h
+	logic/forge/ForgeMirrors.cpp
+	logic/forge/ForgeXzDownload.h
+	logic/forge/ForgeXzDownload.cpp
+	logic/forge/LegacyForge.h
+	logic/forge/LegacyForge.cpp
+	logic/forge/ForgeInstaller.h
+	logic/forge/ForgeInstaller.cpp
+	
+	# Liteloader and related things
+	logic/liteloader/LiteLoaderInstaller.h
+	logic/liteloader/LiteLoaderInstaller.cpp
+	logic/liteloader/LiteLoaderVersionList.h
+	logic/liteloader/LiteLoaderVersionList.cpp
 )
 
 
 ######## UIs ########
 SET(MULTIMC_UIS
+	# Windows
+	gui/MainWindow.ui
 
-# Windows
-gui/MainWindow.ui
-gui/ConsoleWindow.ui
+	# Option pages
+	gui/pages/VersionPage.ui
+	gui/pages/ModFolderPage.ui
+	gui/pages/LegacyUpgradePage.ui
+	gui/pages/LegacyJarModPage.ui
+	gui/pages/LogPage.ui
+	gui/pages/InstanceSettingsPage.ui
+	gui/pages/NotesPage.ui
+	gui/pages/ScreenshotsPage.ui
+	gui/pages/OtherLogsPage.ui
 
-# Dialogs
-gui/dialogs/SettingsDialog.ui
-gui/dialogs/CopyInstanceDialog.ui
-gui/dialogs/NewInstanceDialog.ui
-gui/dialogs/AboutDialog.ui
-gui/dialogs/VersionSelectDialog.ui
-gui/dialogs/LwjglSelectDialog.ui
-gui/dialogs/InstanceSettings.ui
-gui/dialogs/ProgressDialog.ui
-gui/dialogs/IconPickerDialog.ui
-gui/dialogs/LegacyModEditDialog.ui
-gui/dialogs/OneSixModEditDialog.ui
-gui/dialogs/EditNotesDialog.ui
-gui/dialogs/AccountListDialog.ui
-gui/dialogs/AccountSelectDialog.ui
-gui/dialogs/EditAccountDialog.ui
-gui/dialogs/UpdateDialog.ui
+	# Global settings pages
+	gui/pages/global/AccountListPage.ui
+	gui/pages/global/ExternalToolsPage.ui
+	gui/pages/global/JavaPage.ui
+	gui/pages/global/MinecraftPage.ui
+	gui/pages/global/MultiMCPage.ui
+	gui/pages/global/ProxyPage.ui
 
-# Widgets/other
-gui/widgets/MCModInfoFrame.ui
+	# Dialogs
+	gui/dialogs/CopyInstanceDialog.ui
+	gui/dialogs/NewInstanceDialog.ui
+	gui/dialogs/AboutDialog.ui
+	gui/dialogs/VersionSelectDialog.ui
+	gui/dialogs/LwjglSelectDialog.ui
+	gui/dialogs/ProgressDialog.ui
+	gui/dialogs/IconPickerDialog.ui
+	gui/dialogs/AccountSelectDialog.ui
+	gui/dialogs/EditAccountDialog.ui
+	gui/dialogs/LoginDialog.ui
+	gui/dialogs/UpdateDialog.ui
+	gui/dialogs/NotificationDialog.ui
+
+	# Widgets/other
+	gui/widgets/MCModInfoFrame.ui
 )
 
-set (FILES_TO_TRANSLATE ${FILES_TO_TRANSLATE} ${MULTIMC_SOURCES} ${MULTIMC_UIS})
+set(FILES_TO_TRANSLATE)
+foreach(file ${MULTIMC_SOURCES})
+	get_filename_component(absfile "${file}" ABSOLUTE)
+	list(APPEND FILES_TO_TRANSLATE "${absfile}")
+endforeach()
+
+foreach(file ${MULTIMC_UIS})
+	get_filename_component(absfile "${file}" ABSOLUTE)
+	list(APPEND FILES_TO_TRANSLATE "${absfile}")
+endforeach()
+
+set(MULTIMC_QRCS
+	resources/backgrounds/backgrounds.qrc
+	resources/multimc/multimc.qrc
+	resources/pe_dark/pe_dark.qrc
+	resources/pe_light/pe_light.qrc
+	resources/instances/instances.qrc
+	resources/versions/versions.qrc
+)
 
 
 ######## Windows resource files ########
-IF(WIN32)
-SET(MULTIMC_RCS multimc.rc)
-ENDIF()
+if(WIN32)
+	set(MULTIMC_RCS resources/multimc.rc)
+endif()
 
 ####### X11 Stuff #######
-IF(UNIX AND NOT APPLE)
-	SET(MultiMC_QT_ADDITIONAL_MODULES ${MultiMC_QT_ADDITIONAL_MODULES} X11Extras)
-	SET(MultiMC_LINK_ADDITIONAL_LIBS ${MultiMC_LINK_ADDITIONAL_LIBS} xcb)
-	LIST(APPEND MULTIMC_SOURCES gui/Platform_X11.cpp)
-ELSE()
-	LIST(APPEND MULTIMC_SOURCES gui/Platform_Other.cpp)
-ENDIF()
+if(UNIX AND NOT APPLE)
+	set(MultiMC_QT_ADDITIONAL_MODULES ${MultiMC_QT_ADDITIONAL_MODULES} X11Extras)
+	set(MultiMC_LINK_ADDITIONAL_LIBS ${MultiMC_LINK_ADDITIONAL_LIBS} xcb)
+	list(APPEND MULTIMC_SOURCES gui/Platform_X11.cpp)
+else()
+	list(APPEND MULTIMC_SOURCES gui/Platform_Other.cpp)
+endif()
 
 
 ################################ COMPILE ################################
 
-# ICNS file for OS X
-IF(APPLE)
-	SET(MACOSX_BUNDLE_ICON_FILE MultiMC.icns)
-	SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/MultiMC.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-	SET(MULTIMC_SOURCES ${MULTIMC_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/MultiMC.icns)
-ENDIF(APPLE)
-
 # Link additional libraries
-IF(WIN32)
-	SET(MultiMC_LINK_ADDITIONAL_LIBS ${MultiMC_LINK_ADDITIONAL_LIBS}
-		Qt5::WinMain # Link WinMain
-	)
-ENDIF(WIN32)
-
-OPTION(MultiMC_UPDATER_DRY_RUN "Enable updater dry-run mode -- for updater development." OFF)
-OPTION(MultiMC_UPDATER_FORCE_LOCAL "Do not download updated updater -- for updater development." OFF)
-
-OPTION(MultiMC_CODE_COVERAGE "Compiles for code coverage" OFF)
-IF(MultiMC_CODE_COVERAGE)
-	SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0 --coverage")
-	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 --coverage")
-	SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 --coverage")
-	SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g -O0 --coverage")
-	SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -O0 --coverage")
-ENDIF(MultiMC_CODE_COVERAGE)
+if(WIN32)
+	set(MultiMC_LINK_ADDITIONAL_LIBS ${MultiMC_LINK_ADDITIONAL_LIBS} Qt5::WinMain)
+endif(WIN32)
 
 # Tell CMake that MultiMCLauncher.jar is generated.
-SET_SOURCE_FILES_PROPERTIES(${PROJECT_BINARY_DIR}/depends/launcher/MultiMCLauncher.jar GENERATED)
-SET_SOURCE_FILES_PROPERTIES(${PROJECT_BINARY_DIR}/depends/javacheck/JavaCheck.jar GENERATED)
+#SET_SOURCE_FILES_PROPERTIES(${PROJECT_BINARY_DIR}/depends/launcher/MultiMCLauncher.jar GENERATED)
+#SET_SOURCE_FILES_PROPERTIES(${PROJECT_BINARY_DIR}/depends/javacheck/JavaCheck.jar GENERATED)
 
 # Qt 5 stuff
-QT5_WRAP_UI(MULTIMC_UI ${MULTIMC_UIS})
-CONFIGURE_FILE(generated.qrc.in generated.qrc)
-QT5_ADD_RESOURCES(GENERATED_QRC ${CMAKE_CURRENT_BINARY_DIR}/generated.qrc)
-QT5_ADD_RESOURCES(GRAPHICS_QRC graphics.qrc)
+qt5_wrap_ui(MULTIMC_UI ${MULTIMC_UIS})
+qt5_add_resources(MULTIMC_RESOURCES ${MULTIMC_QRCS})
 
 # Add common library
-ADD_LIBRARY(MultiMC_common STATIC ${MULTIMC_SOURCES} ${MULTIMC_UI} ${GENERATED_QRC} ${GRAPHICS_QRC})
+add_library(MultiMC_common STATIC ${MULTIMC_SOURCES} ${MULTIMC_UI} ${MULTIMC_RESOURCES})
 
 # Add executable
-ADD_EXECUTABLE(MultiMC MACOSX_BUNDLE WIN32 main.cpp ${MULTIMC_RCS})
+add_executable(MultiMC MACOSX_BUNDLE WIN32 main.cpp ${MULTIMC_RCS})
 
 # Link
-TARGET_LINK_LIBRARIES(MultiMC MultiMC_common)
-TARGET_LINK_LIBRARIES(MultiMC_common xz-embedded unpack200 quazip libUtil libSettings libGroupView ${MultiMC_LINK_ADDITIONAL_LIBS})
-QT5_USE_MODULES(MultiMC Core Widgets Network Xml Concurrent ${MultiMC_QT_ADDITIONAL_MODULES})
-QT5_USE_MODULES(MultiMC_common Core Widgets Network Xml Concurrent ${MultiMC_QT_ADDITIONAL_MODULES})
-ADD_DEPENDENCIES(MultiMC_common MultiMCLauncher JavaCheck)
+target_link_libraries(MultiMC MultiMC_common)
+target_link_libraries(MultiMC_common xz-embedded unpack200 quazip libUtil ${MultiMC_LINK_ADDITIONAL_LIBS})
+qt5_use_modules(MultiMC Core Widgets Network Xml Concurrent ${MultiMC_QT_ADDITIONAL_MODULES})
+qt5_use_modules(MultiMC_common Core Widgets Network Xml Concurrent ${MultiMC_QT_ADDITIONAL_MODULES})
 
 ################################ INSTALLATION AND PACKAGING ################################
-
-######## Packaging/install paths setup ########
-
-IF(UNIX AND APPLE)
-	SET(PLUGIN_DEST_DIR MultiMC.app/Contents/MacOS)
-	SET(QTCONF_DEST_DIR MultiMC.app/Contents/Resources)
-	SET(APPS "\${CMAKE_INSTALL_PREFIX}/MultiMC.app")
-
-	SET(MACOSX_BUNDLE_BUNDLE_NAME "MultiMC")
-	SET(MACOSX_BUNDLE_INFO_STRING "MultiMC Minecraft launcher and management utility.")
-	SET(MACOSX_BUNDLE_GUI_IDENTIFIER "org.multimc.MultiMC5")
-	SET(MACOSX_BUNDLE_BUNDLE_VERSION "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
-	SET(MACOSX_BUNDLE_SHORT_VERSION_STRING "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
-	SET(MACOSX_BUNDLE_LONG_VERSION_STRING "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
-	SET(MACOSX_BUNDLE_ICON_FILE MultiMC.icns)
-	SET(MACOSX_BUNDLE_COPYRIGHT "Copyright 2013 MultiMC Contributors")
-ELSEIF(UNIX)
-	SET(PLUGIN_DEST_DIR plugins)
-	SET(QTCONF_DEST_DIR .)
-	SET(APPS "\${CMAKE_INSTALL_PREFIX}/bin/MultiMC")
-ELSEIF(WIN32)
-	SET(PLUGIN_DEST_DIR .)
-	SET(QTCONF_DEST_DIR .)
-	SET(APPS "\${CMAKE_INSTALL_PREFIX}/MultiMC.exe")
-ENDIF()
-
-# directories to look for dependencies
-SET(DIRS "${QT_LIBS_DIR}")
 
 ######## Install ########
 
 #### Executable ####
-IF(APPLE AND UNIX) ## OSX
-	INSTALL(TARGETS MultiMC 
+if(APPLE AND UNIX) ## OSX
+	install(TARGETS MultiMC
 		BUNDLE DESTINATION . COMPONENT Runtime
 		RUNTIME DESTINATION MultiMC.app/Contents/MacOS COMPONENT Runtime
 	)
 
-ELSEIF(UNIX) ## LINUX and similar
-	INSTALL(TARGETS MultiMC 
+elseif(UNIX) ## LINUX and similar
+	install(TARGETS MultiMC
 		BUNDLE DESTINATION . COMPONENT Runtime
 		RUNTIME DESTINATION bin COMPONENT Runtime
 	)
-	INSTALL(PROGRAMS package/linux/MultiMC DESTINATION .)
+	install(PROGRAMS package/linux/MultiMC DESTINATION .)
 
-ELSEIF(WIN32) ## WINDOWS
-	INSTALL(TARGETS MultiMC 
+elseif(WIN32) ## WINDOWS
+	install(TARGETS MultiMC
 		BUNDLE DESTINATION . COMPONENT Runtime
 		LIBRARY DESTINATION . COMPONENT Runtime
 		RUNTIME DESTINATION . COMPONENT Runtime
 	)
-ENDIF()
+endif()
 
 #### Dist package logic ####
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-# Image formats
-INSTALL(
-	DIRECTORY "${QT_PLUGINS_DIR}/imageformats"
-	DESTINATION ${PLUGIN_DEST_DIR}
-	COMPONENT Runtime
-	REGEX "tga|svg|tiff|mng" EXCLUDE
-)
-
-# Platform plugins
-INSTALL(
-	DIRECTORY "${QT_PLUGINS_DIR}/platforms"
-	DESTINATION ${PLUGIN_DEST_DIR}
-	COMPONENT Runtime
-	REGEX "minimal|linuxfb|offscreen" EXCLUDE
-)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+	# Image formats
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/imageformats"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "tga|tiff|mng" EXCLUDE
+	)
+	# Icon engines
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/iconengines"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "fontawesome" EXCLUDE
+	)
+	# Platform plugins
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/platforms"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "minimal|linuxfb|offscreen" EXCLUDE
+	)
 else()
-# Image formats
-INSTALL(
-	DIRECTORY "${QT_PLUGINS_DIR}/imageformats"
-	DESTINATION ${PLUGIN_DEST_DIR}
-	COMPONENT Runtime
-	REGEX "tga|svg|tiff|mng" EXCLUDE
-	REGEX "d\\." EXCLUDE
-	REGEX "_debug\\." EXCLUDE
-)
-
-# Platform plugins
-INSTALL(
-	DIRECTORY "${QT_PLUGINS_DIR}/platforms"
-	DESTINATION ${PLUGIN_DEST_DIR}
-	COMPONENT Runtime
-	REGEX "minimal|linuxfb|offscreen" EXCLUDE
-	REGEX "d\\." EXCLUDE
-	REGEX "_debug\\." EXCLUDE
-)
-IF(APPLE)
+	# Image formats
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/imageformats"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "tga|tiff|mng" EXCLUDE
+		REGEX "d\\." EXCLUDE
+		REGEX "_debug\\." EXCLUDE
+	)
+	# Icon engines
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/iconengines"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "fontawesome" EXCLUDE
+		REGEX "d\\." EXCLUDE
+		REGEX "_debug\\." EXCLUDE
+	)
+	# Platform plugins
+	install(
+		DIRECTORY "${QT_PLUGINS_DIR}/platforms"
+		DESTINATION ${PLUGIN_DEST_DIR}
+		COMPONENT Runtime
+		REGEX "minimal|linuxfb|offscreen" EXCLUDE
+		REGEX "d\\." EXCLUDE
+		REGEX "_debug\\." EXCLUDE
+	)
+	if(APPLE)
 	# Accessible plugin to make buttons look decent on osx
-	INSTALL(
+	install(
 		DIRECTORY "${QT_PLUGINS_DIR}/accessible"
 		DESTINATION ${PLUGIN_DEST_DIR}
 		COMPONENT Runtime
@@ -640,80 +836,69 @@ IF(APPLE)
 		REGEX "d\\." EXCLUDE
 		REGEX "_debug\\." EXCLUDE
 	)
-ENDIF()
-
+	endif()
 endif()
 
 # qtconf
-INSTALL(
+install(
 	CODE "
-FILE(WRITE \"\${CMAKE_INSTALL_PREFIX}/${QTCONF_DEST_DIR}/qt.conf\" \"\")
+file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${QTCONF_DEST_DIR}/qt.conf\" \"\")
 "
 	COMPONENT Runtime
 )
 
-CONFIGURE_FILE(
+# ICNS file for OS X
+if(APPLE)
+	install(FILES resources/MultiMC.icns DESTINATION MultiMC.app/Contents/Resources)
+endif()
+
+configure_file(
 	"${CMAKE_CURRENT_SOURCE_DIR}/install_prereqs.cmake.in"
 	"${CMAKE_CURRENT_BINARY_DIR}/install_prereqs.cmake"
-	@ONLY)
-INSTALL(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install_prereqs.cmake" COMPONENT Runtime)
+	@ONLY
+)
+install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/install_prereqs.cmake" COMPONENT Runtime)
 
 
 
 ######## Package ########
 
 # Package with CPack
-IF(UNIX)
+if(UNIX)
 	if(APPLE)
-		SET(CPACK_GENERATOR "ZIP")
+	set(CPACK_GENERATOR "ZIP")
 	else()
-		SET(CPACK_GENERATOR "TGZ")
+	set(CPACK_GENERATOR "TGZ")
 	endif()
-ELSEIF(WIN32)
-	SET(CPACK_GENERATOR "ZIP")
-ENDIF()
-SET(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
+elseif(WIN32)
+	set(CPACK_GENERATOR "ZIP")
+endif()
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
 
-SET(CPACK_PACKAGE_NAME "MultiMC 5")
-SET(CPACK_PACKAGE_VENDOR "")
-SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MultiMC - Minecraft launcher and management tool.")
-SET(CPACK_PACKAGE_VERSION "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
-SET(CPACK_PACKAGE_VERSION_MAJOR ${MultiMC_VERSION_MAJOR})
-SET(CPACK_PACKAGE_VERSION_MINOR ${MultiMC_VERSION_MINOR})
-SET(CPACK_PACKAGE_VERSION_PATCH ${MultiMC_VERSION_REV})
+set(CPACK_PACKAGE_NAME "MultiMC 5")
+set(CPACK_PACKAGE_VENDOR "")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MultiMC - Minecraft launcher and management tool.")
+set(CPACK_PACKAGE_VERSION "${MultiMC_VERSION_MAJOR}.${MultiMC_VERSION_MINOR}.${MultiMC_VERSION_REV}.${MultiMC_VERSION_BUILD}")
+set(CPACK_PACKAGE_VERSION_MAJOR ${MultiMC_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${MultiMC_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${MultiMC_VERSION_REV})
 
-IF(CPACK_GENERATOR STREQUAL "NSIS")
-SET(CPACK_PACKAGE_FILE_NAME "Setup-MultiMC")
-ELSE()
-SET(CPACK_PACKAGE_FILE_NAME "MultiMC")
-ENDIF()
+if(CPACK_GENERATOR STREQUAL "NSIS")
+	set(CPACK_PACKAGE_FILE_NAME "Setup-MultiMC")
+else()
+	set(CPACK_PACKAGE_FILE_NAME "MultiMC")
+endif()
 
-IF(WIN32)
-SET(CPACK_PACKAGE_INSTALL_DIRECTORY "MultiMC 5")
-ENDIF()
+if(WIN32)
+	set(CPACK_PACKAGE_INSTALL_DIRECTORY "MultiMC 5")
+endif()
 
-INCLUDE(CPack)
+include(CPack)
 
-include_directories(${PROJECT_BINARY_DIR}/include)
+include(Coverity)
 
-### translation stuff
-
-file (GLOB TRANSLATIONS_FILES translations/*.ts)
-
-option (UPDATE_TRANSLATIONS "Update source translation translations/*.ts files (WARNING: make clean will delete the source .ts files! Danger!)")
-IF(UPDATE_TRANSLATIONS)
-	qt5_create_translation(QM_FILES ${FILES_TO_TRANSLATE} ${TRANSLATIONS_FILES})
-ELSE()
-	qt5_add_translation(QM_FILES ${TRANSLATIONS_FILES})
-ENDIF()
-
-add_custom_target (translations DEPENDS ${QM_FILES})
-IF(APPLE AND UNIX) ## OSX
-	install(FILES ${QM_FILES} DESTINATION MultiMC.app/Contents/MacOS/translations)
-ELSE()
-	install(FILES ${QM_FILES} DESTINATION translations)
-ENDIF()
-
+# Translations
+add_subdirectory(translations)
 
 # Tests
 add_subdirectory(tests)

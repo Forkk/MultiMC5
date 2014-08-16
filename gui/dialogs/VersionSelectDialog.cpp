@@ -18,13 +18,11 @@
 
 #include <QHeaderView>
 
-#include <QDebug>
-
 #include <gui/dialogs/ProgressDialog.h>
 #include "gui/Platform.h"
 
 #include <logic/BaseVersion.h>
-#include <logic/lists/BaseVersionList.h>
+#include <logic/BaseVersionList.h>
 #include <logic/tasks/Task.h>
 
 VersionSelectDialog::VersionSelectDialog(BaseVersionList *vlist, QString title, QWidget *parent,
@@ -49,6 +47,11 @@ VersionSelectDialog::VersionSelectDialog(BaseVersionList *vlist, QString title, 
 	{
 		ui->buttonBox->button(QDialogButtonBox::Cancel)->setEnabled(false);
 	}
+}
+
+void VersionSelectDialog::setEmptyString(QString emptyString)
+{
+	ui->listView->setEmptyString(emptyString);
 }
 
 VersionSelectDialog::~VersionSelectDialog()
@@ -77,6 +80,7 @@ void VersionSelectDialog::loadList()
 	Task *loadTask = m_vlist->getLoadTask();
 	loadTask->setParent(taskDlg);
 	taskDlg->exec(loadTask);
+	delete taskDlg;
 }
 
 BaseVersionPtr VersionSelectDialog::selectedVersion() const
@@ -91,21 +95,16 @@ void VersionSelectDialog::on_refreshButton_clicked()
 	loadList();
 }
 
-void VersionSelectDialog::setFilter(int column, QString filter)
+void VersionSelectDialog::setExactFilter(int column, QString filter)
 {
 	m_proxyModel->setFilterKeyColumn(column);
-	m_proxyModel->setFilterFixedString(filter);
-	/*
-	QStringList filteredTypes;
-	if (!ui->filterSnapshotsCheckbox->isChecked())
-		filteredTypes += "Snapshot";
-	if (!ui->filterMCNostalgiaCheckbox->isChecked())
-		filteredTypes += "Nostalgia";
+	// m_proxyModel->setFilterFixedString(filter);
+	m_proxyModel->setFilterRegExp(QRegExp(QString("^%1$").arg(filter.replace(".", "\\.")),
+										  Qt::CaseInsensitive, QRegExp::RegExp));
+}
 
-	QString regexStr = "^.*$";
-	if (filteredTypes.length() > 0)
-		regexStr = QString("^((?!%1).)*$").arg(filteredTypes.join('|'));
-
-	QLOG_DEBUG() << "Filter:" << regexStr;
-	*/
+void VersionSelectDialog::setFuzzyFilter(int column, QString filter)
+{
+	m_proxyModel->setFilterKeyColumn(column);
+	m_proxyModel->setFilterWildcard(filter);
 }

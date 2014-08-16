@@ -15,33 +15,45 @@
 
 #pragma once
 
-#include <QStringList>
-#include <QDir>
-
 #include "BaseInstance.h"
 
-class OneSixVersion;
-class Task;
-class ModList;
+#include "logic/minecraft/InstanceVersion.h"
+#include "logic/ModList.h"
+#include "gui/pages/BasePageProvider.h"
 
-class OneSixInstance : public BaseInstance
+class OneSixInstance : public BaseInstance, public BasePageProvider
 {
 	Q_OBJECT
 public:
 	explicit OneSixInstance(const QString &rootDir, SettingsObject *settings,
-							QObject *parent = 0);
+						  QObject *parent = 0);
+	virtual ~OneSixInstance(){};
+
+	virtual void init() override;
+
+	////// Edit Instance Dialog stuff //////
+	virtual QList<BasePage *> getPages();
+	virtual QString dialogTitle();
 
 	//////  Mod Lists  //////
 	std::shared_ptr<ModList> loaderModList();
-	std::shared_ptr<ModList> resourcePackList();
+	std::shared_ptr<ModList> coreModList();
+	std::shared_ptr<ModList> resourcePackList() override;
+	std::shared_ptr<ModList> texturePackList() override;
 
-	////// Directories //////
+	virtual QSet<QString> traits();
+	
+	////// Directories and files //////
+	QString jarModsDir() const;
 	QString resourcePacksDir() const;
+	QString texturePacksDir() const;
 	QString loaderModsDir() const;
+	QString coreModsDir() const;
+	QString libDir() const;
 	virtual QString instanceConfigFolder() const override;
 
-	virtual std::shared_ptr<Task> doUpdate(bool only_prepare) override;
-	virtual MinecraftProcess *prepareForLaunch(MojangAccountPtr account) override;
+	virtual std::shared_ptr<Task> doUpdate() override;
+	virtual bool prepareForLaunch(AuthSessionPtr account, QString & launchScript) override;
 
 	virtual void cleanupAfterRun() override;
 
@@ -53,26 +65,43 @@ public:
 	virtual bool shouldUpdate() const override;
 	virtual void setShouldUpdate(bool val) override;
 
-	virtual QDialog *createModEditDialog(QWidget *parent) override;
-
-	/// reload the full version json file. return true on success!
-	bool reloadFullVersion();
+	/**
+	 * reload the full version json files.
+	 * 
+	 * throws various exceptions :3
+	 */
+	void reloadVersion();
+	
+	/// clears all version information in preparation for an update
+	void clearVersion();
+	
 	/// get the current full version info
-	std::shared_ptr<OneSixVersion> getFullVersion();
-	/// revert the current custom version back to base
-	bool revertCustomVersion();
-	/// customize the current base version
-	bool customizeVersion();
+	std::shared_ptr<InstanceVersion> getFullVersion() const;
+	
 	/// is the current version original, or custom?
 	virtual bool versionIsCustom() override;
+	
+	/// does this instance have an FTB pack patch inside?
+	bool versionIsFTBPack();
 
 	virtual QString defaultBaseJar() const override;
 	virtual QString defaultCustomBaseJar() const override;
 
-	virtual bool menuActionEnabled(QString action_name) const override;
 	virtual QString getStatusbarDescription() override;
 
+	virtual QDir jarmodsPath() const;
+	virtual QDir librariesPath() const;
+	virtual QDir versionsPath() const;
+	virtual QStringList externalPatches() const;
+	virtual bool providesVersionFile() const;
+
+	bool reload() override;
+	virtual QStringList extraArguments() const override;
+	
+signals:
+	void versionReloaded();
+
 private:
-	QStringList processMinecraftArgs(MojangAccountPtr account);
-	QDir reconstructAssets(std::shared_ptr<OneSixVersion> version);
+	QStringList processMinecraftArgs(AuthSessionPtr account);
+	QDir reconstructAssets(std::shared_ptr<InstanceVersion> version);
 };

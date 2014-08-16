@@ -17,6 +17,7 @@
  * limitations under the License.
  */
 #include "MultiMC.h"
+#include "BuildConfig.h"
 
 #include "MainWindow.h"
 #include "ui_MainWindow.h"
@@ -26,64 +27,74 @@
 #include <QInputDialog>
 
 #include <QDesktopServices>
+#include <QKeyEvent>
 #include <QUrl>
 #include <QDir>
 #include <QFileInfo>
 #include <QLabel>
 #include <QToolButton>
 #include <QWidgetAction>
+#include <QProgressDialog>
+#include <QShortcut>
 
 #include "osutils.h"
 #include "userutils.h"
 #include "pathutils.h"
 
-#include "categorizedview.h"
-#include "categorydrawer.h"
+#include "gui/groupview/GroupView.h"
+#include "gui/groupview/InstanceDelegate.h"
 
 #include "gui/Platform.h"
 
-#include "gui/widgets/InstanceDelegate.h"
 #include "gui/widgets/LabeledToolButton.h"
+#include "widgets/ServerStatus.h"
 
-#include "gui/dialogs/SettingsDialog.h"
 #include "gui/dialogs/NewInstanceDialog.h"
 #include "gui/dialogs/ProgressDialog.h"
 #include "gui/dialogs/AboutDialog.h"
 #include "gui/dialogs/VersionSelectDialog.h"
 #include "gui/dialogs/CustomMessageBox.h"
 #include "gui/dialogs/LwjglSelectDialog.h"
-#include "gui/dialogs/InstanceSettings.h"
 #include "gui/dialogs/IconPickerDialog.h"
-#include "gui/dialogs/EditNotesDialog.h"
 #include "gui/dialogs/CopyInstanceDialog.h"
-#include "gui/dialogs/AccountListDialog.h"
 #include "gui/dialogs/AccountSelectDialog.h"
 #include "gui/dialogs/UpdateDialog.h"
 #include "gui/dialogs/EditAccountDialog.h"
+#include "gui/dialogs/NotificationDialog.h"
+
+#include "gui/pages/global/MultiMCPage.h"
+#include "gui/pages/global/ExternalToolsPage.h"
+#include "gui/pages/global/AccountListPage.h"
+#include "pages/global/ProxyPage.h"
+#include "pages/global/JavaPage.h"
+#include "pages/global/MinecraftPage.h"
 
 #include "gui/ConsoleWindow.h"
+#include "pagedialog/PageDialog.h"
 
-#include "logic/lists/InstanceList.h"
-#include "logic/lists/MinecraftVersionList.h"
-#include "logic/lists/LwjglVersionList.h"
+#include "logic/InstanceList.h"
+#include "logic/minecraft/MinecraftVersionList.h"
+#include "logic/LwjglVersionList.h"
 #include "logic/icons/IconList.h"
-#include "logic/lists/JavaVersionList.h"
+#include "logic/java/JavaVersionList.h"
 
 #include "logic/auth/flows/AuthenticateTask.h"
 #include "logic/auth/flows/RefreshTask.h"
-#include "logic/auth/flows/ValidateTask.h"
 
 #include "logic/updater/DownloadUpdateTask.h"
 
 #include "logic/news/NewsChecker.h"
 
+#include "logic/status/StatusChecker.h"
+
 #include "logic/net/URLConstants.h"
+#include "logic/net/NetJob.h"
 
 #include "logic/BaseInstance.h"
 #include "logic/InstanceFactory.h"
 #include "logic/MinecraftProcess.h"
 #include "logic/OneSixUpdate.h"
-#include "logic/JavaUtils.h"
+#include "logic/java/JavaUtils.h"
 #include "logic/NagUtils.h"
 #include "logic/SkinUtils.h"
 
@@ -95,14 +106,28 @@
 #include <logic/updater/NotificationChecker.h>
 #include <logic/tasks/ThreadTask.h>
 
+#include "logic/tools/BaseProfiler.h"
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
 	MultiMCPlatform::fixWM_CLASS(this);
 	ui->setupUi(this);
-	setWindowTitle(QString("MultiMC %1").arg(MMC->version().toString()));
+
+	QString winTitle =
+		QString("MultiMC 5 - Version %1").arg(BuildConfig.printableVersionString());
+	if (!BuildConfig.BUILD_PLATFORM.isEmpty())
+		winTitle += " on " + BuildConfig.BUILD_PLATFORM;
+	setWindowTitle(winTitle);
 
 	// OSX magic.
 	// setUnifiedTitleAndToolBarOnMac(true);
+
+	// Global shortcuts
+	{
+		// FIXME: This is kinda weird. and bad. We need some kind of managed shutdown.
+		auto q = new QShortcut(QKeySequence::Quit, this);
+		connect(q, SIGNAL(activated()), qApp, SLOT(quit()));
+	}
 
 	// The instance action toolbar customizations
 	{
@@ -122,32 +147,33 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 	// Add the news label to the news toolbar.
 	{
 		newsLabel = new QToolButton();
-		newsLabel->setIcon(QIcon(":/icons/toolbar/news"));
+		newsLabel->setIcon(QIcon::fromTheme("news"));
 		newsLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 		newsLabel->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 		ui->newsToolBar->insertWidget(ui->actionMoreNews, newsLabel);
-		QObject::connect(newsLabel, &QAbstractButton::clicked, this, &MainWindow::newsButtonClicked);
-		QObject::connect(MMC->newsChecker().get(), &NewsChecker::newsLoaded, this, &MainWindow::updateNewsLabel);
+		QObject::connect(newsLabel, &QAbstractButton::clicked, this,
+						 &MainWindow::newsButtonClicked);
+		QObject::connect(MMC->newsChecker().get(), &NewsChecker::newsLoaded, this,
+						 &MainWindow::updateNewsLabel);
 		updateNewsLabel();
 	}
 
 	// Create the instance list widget
 	{
-		view = new KCategorizedView(ui->centralWidget);
-		drawer = new KCategoryDrawer(view);
+		view = new GroupView(ui->centralWidget);
 
 		view->setSelectionMode(QAbstractItemView::SingleSelection);
-		view->setCategoryDrawer(drawer);
-		view->setCollapsibleBlocks(true);
-		view->setViewMode(QListView::IconMode);
-		view->setFlow(QListView::LeftToRight);
-		view->setWordWrap(true);
-		view->setMouseTracking(true);
-		view->viewport()->setAttribute(Qt::WA_Hover);
+		// view->setCategoryDrawer(drawer);
+		// view->setCollapsibleBlocks(true);
+		// view->setViewMode(QListView::IconMode);
+		// view->setFlow(QListView::LeftToRight);
+		// view->setWordWrap(true);
+		// view->setMouseTracking(true);
+		// view->viewport()->setAttribute(Qt::WA_Hover);
 		auto delegate = new ListViewDelegate();
 		view->setItemDelegate(delegate);
-		view->setSpacing(10);
-		view->setUniformItemWidths(true);
+		// view->setSpacing(10);
+		// view->setUniformItemWidths(true);
 
 		// do not show ugly blue border on the mac
 		view->setAttribute(Qt::WA_MacShowFocusRect, false);
@@ -167,8 +193,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 		view->setModel(proxymodel);
 
 		view->setContextMenuPolicy(Qt::CustomContextMenu);
-		connect(view, SIGNAL(customContextMenuRequested(const QPoint&)),
-			this, SLOT(showInstanceContextMenu(const QPoint&)));
+		connect(view, SIGNAL(customContextMenuRequested(const QPoint &)), this,
+				SLOT(showInstanceContextMenu(const QPoint &)));
 
 		ui->horizontalLayout->addWidget(view);
 	}
@@ -195,7 +221,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 	connect(MMC->instances().get(), SIGNAL(dataIsInvalid()), SLOT(selectionBad()));
 
 	m_statusLeft = new QLabel(tr("No instance selected"), this);
+	m_statusRight = new ServerStatus(this);
 	statusBar()->addPermanentWidget(m_statusLeft, 1);
+	statusBar()->addPermanentWidget(m_statusRight, 0);
 
 	// Add "manage accounts" button, right align
 	QWidget *spacer = new QWidget();
@@ -215,13 +243,23 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 	accountMenuButton->setMenu(accountMenu);
 	accountMenuButton->setPopupMode(QToolButton::InstantPopup);
 	accountMenuButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	accountMenuButton->setIcon(
-		QPixmap(":/icons/toolbar/noaccount").scaled(48, 48, Qt::KeepAspectRatio));
+	accountMenuButton->setIcon(QIcon::fromTheme("noaccount"));
 
 	QWidgetAction *accountMenuButtonAction = new QWidgetAction(this);
 	accountMenuButtonAction->setDefaultWidget(accountMenuButton);
 
 	ui->mainToolBar->addAction(accountMenuButtonAction);
+
+	// set up global pages dialog
+	{
+		m_globalSettingsProvider = std::make_shared<GenericPageProvider>(tr("Settings"));
+		m_globalSettingsProvider->addPage<MultiMCPage>();
+		m_globalSettingsProvider->addPage<MinecraftPage>();
+		m_globalSettingsProvider->addPage<JavaPage>();
+		m_globalSettingsProvider->addPage<ProxyPage>();
+		m_globalSettingsProvider->addPage<ExternalToolsPage>();
+		m_globalSettingsProvider->addPage<AccountListPage>();
+	}
 
 	// Update the menu when the active account changes.
 	// Shouldn't have to use lambdas here like this, but if I don't, the compiler throws a fit.
@@ -231,28 +269,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 	connect(MMC->accounts().get(), &MojangAccountList::listChanged, [this]
 	{ repopulateAccountsMenu(); });
 
-	std::shared_ptr<MojangAccountList> accounts = MMC->accounts();
+	// Show initial account
+	activeAccountChanged();
 
-	// TODO: Nicer way to iterate?
+	auto accounts = MMC->accounts();
+
+	QList<CacheDownloadPtr> skin_dls;
 	for (int i = 0; i < accounts->count(); i++)
 	{
-		MojangAccountPtr account = accounts->at(i);
+		auto account = accounts->at(i);
 		if (account != nullptr)
 		{
-			auto job = new NetJob("Startup player skins: " + account->username());
-
-			for (AccountProfile profile : account->profiles())
+			for (auto profile : account->profiles())
 			{
 				auto meta = MMC->metacache()->resolveEntry("skins", profile.name + ".png");
 				auto action = CacheDownload::make(
 					QUrl("http://" + URLConstants::SKINS_BASE + profile.name + ".png"), meta);
-				job->addNetAction(action);
+				skin_dls.append(action);
 				meta->stale = true;
 			}
-
-			connect(job, SIGNAL(succeeded()), SLOT(activeAccountChanged()));
-			job->start();
 		}
+	}
+	if (!skin_dls.isEmpty())
+	{
+		auto job = new NetJob("Startup player skins download");
+		connect(job, SIGNAL(succeeded()), SLOT(skinJobFinished()));
+		connect(job, SIGNAL(failed()), SLOT(skinJobFinished()));
+		for (auto action : skin_dls)
+			job->addNetAction(action);
+		skin_download_job.reset(job);
+		job->start();
 	}
 
 	// run the things that load and download other things... FIXME: this is NOT the place
@@ -275,38 +321,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 		auto updater = MMC->updateChecker();
 		connect(updater.get(), &UpdateChecker::updateAvailable, this,
 				&MainWindow::updateAvailable);
-		connect(updater.get(), &UpdateChecker::noUpdateFound, [this]()
-		{
-			CustomMessageBox::selectable(
-				this, tr("No update found."),
-				tr("No MultiMC update was found!\nYou are using the latest version."))->exec();
-		});
+		connect(updater.get(), &UpdateChecker::noUpdateFound, this,
+				&MainWindow::updateNotAvailable);
 		// if automatic update checks are allowed, start one.
 		if (MMC->settings()->get("AutoUpdate").toBool())
-			on_actionCheckUpdate_triggered();
-
-		connect(MMC->notificationChecker().get(), &NotificationChecker::notificationCheckFinished,
-				this, &MainWindow::notificationsChanged);
-	}
-
-	const QString currentInstanceId = MMC->settings()->get("SelectedInstance").toString();
-	if (!currentInstanceId.isNull())
-	{
-		const QModelIndex index = MMC->instances()->getInstanceIndexById(currentInstanceId);
-		if (index.isValid())
 		{
-			const QModelIndex mappedIndex = proxymodel->mapFromSource(index);
-			view->setCurrentIndex(mappedIndex);
+			auto updater = MMC->updateChecker();
+			updater->checkForUpdate(false);
 		}
-		else
-		{
-			view->setCurrentIndex(proxymodel->index(0, 0));
-		}
+
+		connect(MMC->notificationChecker().get(),
+				&NotificationChecker::notificationCheckFinished, this,
+				&MainWindow::notificationsChanged);
 	}
-	else
-	{
-		view->setCurrentIndex(proxymodel->index(0, 0));
-	}
+
+	setSelectedInstanceById(MMC->settings()->get("SelectedInstance").toString());
 
 	// removing this looks stupid
 	view->setFocus();
@@ -316,30 +345,112 @@ MainWindow::~MainWindow()
 {
 	delete ui;
 	delete proxymodel;
-	delete drawer;
 }
 
-void MainWindow::showInstanceContextMenu(const QPoint& pos)
+void MainWindow::skinJobFinished()
 {
-	if(!view->indexAt(pos).isValid())
+	activeAccountChanged();
+	skin_download_job.reset();
+}
+
+void MainWindow::showInstanceContextMenu(const QPoint &pos)
+{
+	QList<QAction *> actions;
+
+	QAction *actionSep = new QAction("", this);
+	actionSep->setSeparator(true);
+
+	bool onInstance = view->indexAt(pos).isValid();
+	if (onInstance)
 	{
-		return;
+		actions = ui->instanceToolBar->actions();
+
+		QAction *actionVoid = new QAction(m_selectedInstance->name(), this);
+		actionVoid->setEnabled(false);
+
+		QAction *actionRename = new QAction(tr("Rename"), this);
+		actionRename->setToolTip(ui->actionRenameInstance->toolTip());
+
+		QAction *actionCopyInstance = new QAction(tr("Copy instance"), this);
+		actionCopyInstance->setToolTip(ui->actionCopyInstance->toolTip());
+
+		connect(actionRename, SIGNAL(triggered(bool)),
+				SLOT(on_actionRenameInstance_triggered()));
+		connect(actionCopyInstance, SIGNAL(triggered(bool)),
+				SLOT(on_actionCopyInstance_triggered()));
+
+		actions.replace(1, actionRename);
+		actions.prepend(actionSep);
+		actions.prepend(actionVoid);
+		actions.append(actionCopyInstance);
 	}
+	else
+	{
+		QAction *actionVoid = new QAction(tr("MultiMC"), this);
+		actionVoid->setEnabled(false);
 
-	QList<QAction *> actions = ui->instanceToolBar->actions();
+		QAction *actionCreateInstance = new QAction(tr("Create instance"), this);
+		actionCreateInstance->setToolTip(ui->actionAddInstance->toolTip());
 
-	// HACK: Filthy rename button hack because the instance view is getting rewritten anyway
-	QAction *actionRename;
-	actionRename = new QAction(tr("Rename"), this);
-	actionRename->setToolTip(ui->actionRenameInstance->toolTip());
+		connect(actionCreateInstance, SIGNAL(triggered(bool)),
+				SLOT(on_actionAddInstance_triggered()));
 
-	connect(actionRename, SIGNAL(triggered(bool)), SLOT(on_actionRenameInstance_triggered()));
-
-	actions.replace(1, actionRename);
-
+		actions.prepend(actionSep);
+		actions.prepend(actionVoid);
+		actions.append(actionCreateInstance);
+	}
 	QMenu myMenu;
 	myMenu.addActions(actions);
+	if (onInstance)
+		myMenu.setEnabled(m_selectedInstance->canLaunch());
 	myMenu.exec(view->mapToGlobal(pos));
+}
+
+void MainWindow::updateToolsMenu()
+{
+	if (ui->actionLaunchInstance->menu())
+	{
+		ui->actionLaunchInstance->menu()->deleteLater();
+	}
+	QMenu *launchMenu = new QMenu(this);
+	QAction *normalLaunch = launchMenu->addAction(tr("Launch"));
+	connect(normalLaunch, &QAction::triggered, [this]()
+	{ doLaunch(); });
+	launchMenu->addSeparator()->setText(tr("Profilers"));
+	for (auto profiler : MMC->profilers().values())
+	{
+		QAction *profilerAction = launchMenu->addAction(profiler->name());
+		QString error;
+		if (!profiler->check(&error))
+		{
+			profilerAction->setDisabled(true);
+			profilerAction->setToolTip(
+				tr("Profiler not setup correctly. Go into settings, \"External Tools\"."));
+		}
+		else
+		{
+			connect(profilerAction, &QAction::triggered, [this, profiler]()
+			{ doLaunch(true, profiler.get()); });
+		}
+	}
+	launchMenu->addSeparator()->setText(tr("Tools"));
+	for (auto tool : MMC->tools().values())
+	{
+		QAction *toolAction = launchMenu->addAction(tool->name());
+		QString error;
+		if (!tool->check(&error))
+		{
+			toolAction->setDisabled(true);
+			toolAction->setToolTip(
+				tr("Tool not setup correctly. Go into settings, \"External Tools\"."));
+		}
+		else
+		{
+			connect(toolAction, &QAction::triggered, [this, tool]()
+			{ tool->createDetachedTool(m_selectedInstance, this)->run(); });
+		}
+	}
+	ui->actionLaunchInstance->setMenu(launchMenu);
 }
 
 void MainWindow::repopulateAccountsMenu()
@@ -396,7 +507,7 @@ void MainWindow::repopulateAccountsMenu()
 
 	QAction *action = new QAction(tr("No Default Account"), this);
 	action->setCheckable(true);
-	action->setIcon(QPixmap(":/icons/toolbar/noaccount").scaled(48, 48, Qt::KeepAspectRatio));
+	action->setIcon(QIcon::fromTheme("noaccount"));
 	action->setData("");
 	if (active_username.isEmpty())
 	{
@@ -450,8 +561,7 @@ void MainWindow::activeAccountChanged()
 	}
 
 	// Set the icon to the "no account" icon.
-	accountMenuButton->setIcon(
-		QPixmap(":/icons/toolbar/noaccount").scaled(48, 48, Qt::KeepAspectRatio));
+	accountMenuButton->setIcon(QIcon::fromTheme("noaccount"));
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *ev)
@@ -526,6 +636,12 @@ void MainWindow::updateAvailable(QString repo, QString versionName, int versionI
 	}
 }
 
+void MainWindow::updateNotAvailable()
+{
+	UpdateDialog dlg(false);
+	dlg.exec();
+}
+
 QList<int> stringToIntList(const QString &string)
 {
 	QStringList split = string.split(',', QString::SkipEmptyParts);
@@ -556,25 +672,8 @@ void MainWindow::notificationsChanged()
 		NotificationChecker::NotificationEntry entry = *it;
 		if (!shownNotifications.contains(entry.id) && entry.applies())
 		{
-			QMessageBox::Icon icon;
-			switch (entry.type)
-			{
-			case NotificationChecker::NotificationEntry::Critical:
-				icon = QMessageBox::Critical;
-				break;
-			case NotificationChecker::NotificationEntry::Warning:
-				icon = QMessageBox::Warning;
-				break;
-			case NotificationChecker::NotificationEntry::Information:
-				icon = QMessageBox::Information;
-				break;
-			}
-
-			QMessageBox box(icon, tr("Notification"), entry.message, QMessageBox::Close, this);
-			QPushButton *dontShowAgainButton = box.addButton(tr("Don't show again"), QMessageBox::AcceptRole);
-			box.setDefaultButton(QMessageBox::Close);
-			box.exec();
-			if (box.clickedButton() == dontShowAgainButton)
+			NotificationDialog dialog(entry, this);
+			if (dialog.exec() == NotificationDialog::DontShowAgain)
 			{
 				shownNotifications.append(entry.id);
 			}
@@ -596,9 +695,8 @@ void MainWindow::downloadUpdates(QString repo, int versionId, bool installOnExit
 	if (updateDlg.exec(&updateTask))
 	{
 		UpdateFlags baseFlags = None;
-		#ifdef MultiMC_UPDATER_DRY_RUN
+		if (BuildConfig.UPDATER_DRY_RUN)
 			baseFlags |= DryRun;
-		#endif
 		if (installOnExit)
 			MMC->installUpdates(updateTask.updateFilesDir(), baseFlags | OnExit);
 		else
@@ -616,7 +714,7 @@ void MainWindow::setCatBackground(bool enabled)
 {
 	if (enabled)
 	{
-		view->setStyleSheet("QListView"
+		view->setStyleSheet("GroupView"
 							"{"
 							"background-image: url(:/backgrounds/kitteh);"
 							"background-attachment: fixed;"
@@ -634,6 +732,11 @@ void MainWindow::setCatBackground(bool enabled)
 
 void MainWindow::on_actionAddInstance_triggered()
 {
+#ifdef TEST_SEGV
+	// For further testing stuff.
+	int v = *((int *)-1);
+#endif
+
 	if (!MMC->minecraftlist()->isLoaded() && m_versionLoadTask &&
 		m_versionLoadTask->isRunning())
 	{
@@ -647,7 +750,7 @@ void MainWindow::on_actionAddInstance_triggered()
 	if (!newInstDlg.exec())
 		return;
 
-	BaseInstance *newInstance = NULL;
+	InstancePtr newInstance;
 
 	QString instancesDir = MMC->settings()->get("InstanceDir").toString();
 	QString instDirName = DirNameFromString(newInstDlg.instName(), instancesDir);
@@ -656,7 +759,7 @@ void MainWindow::on_actionAddInstance_triggered()
 	auto &loader = InstanceFactory::get();
 
 	auto error = loader.createInstance(newInstance, newInstDlg.selectedVersion(), instDir);
-	QString errorMsg = QString("Failed to create instance %1: ").arg(instDirName);
+	QString errorMsg = tr("Failed to create instance %1: ").arg(instDirName);
 	switch (error)
 	{
 	case InstanceFactory::NoCreateError:
@@ -667,21 +770,21 @@ void MainWindow::on_actionAddInstance_triggered()
 
 	case InstanceFactory::InstExists:
 	{
-		errorMsg += "An instance with the given directory name already exists.";
+		errorMsg += tr("An instance with the given directory name already exists.");
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		return;
 	}
 
 	case InstanceFactory::CantCreateDir:
 	{
-		errorMsg += "Failed to create the instance directory.";
+		errorMsg += tr("Failed to create the instance directory.");
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		return;
 	}
 
 	default:
 	{
-		errorMsg += QString("Unknown instance loader error %1").arg(error);
+		errorMsg += tr("Unknown instance loader error %1").arg(error);
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		return;
 	}
@@ -690,7 +793,7 @@ void MainWindow::on_actionAddInstance_triggered()
 	if (MMC->accounts()->anyAccountIsValid())
 	{
 		ProgressDialog loadDialog(this);
-		auto update = newInstance->doUpdate(false);
+		auto update = newInstance->doUpdate();
 		connect(update.get(), &Task::failed, [this](QString reason)
 		{
 			QString error = QString("Instance load failed: %1").arg(reason);
@@ -724,35 +827,35 @@ void MainWindow::on_actionCopyInstance_triggered()
 
 	auto &loader = InstanceFactory::get();
 
-	BaseInstance *newInstance = NULL;
+	InstancePtr newInstance;
 	auto error = loader.copyInstance(newInstance, m_selectedInstance, instDir);
 
-	QString errorMsg = QString("Failed to create instance %1: ").arg(instDirName);
+	QString errorMsg = tr("Failed to create instance %1: ").arg(instDirName);
 	switch (error)
 	{
 	case InstanceFactory::NoCreateError:
 		newInstance->setName(copyInstDlg.instName());
 		newInstance->setIconKey(copyInstDlg.iconKey());
-		MMC->instances()->add(InstancePtr(newInstance));
+		MMC->instances()->add(newInstance);
 		return;
 
 	case InstanceFactory::InstExists:
 	{
-		errorMsg += "An instance with the given directory name already exists.";
+		errorMsg += tr("An instance with the given directory name already exists.");
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		break;
 	}
 
 	case InstanceFactory::CantCreateDir:
 	{
-		errorMsg += "Failed to create the instance directory.";
+		errorMsg += tr("Failed to create the instance directory.");
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		break;
 	}
 
 	default:
 	{
-		errorMsg += QString("Unknown instance loader error %1").arg(error);
+		errorMsg += tr("Unknown instance loader error %1").arg(error);
 		CustomMessageBox::selectable(this, tr("Error"), errorMsg, QMessageBox::Warning)->show();
 		break;
 	}
@@ -769,23 +872,35 @@ void MainWindow::on_actionChangeInstIcon_triggered()
 	if (dlg.result() == QDialog::Accepted)
 	{
 		m_selectedInstance->setIconKey(dlg.selectedIconKey);
-		auto ico = MMC->icons()->getIcon(dlg.selectedIconKey);
+		auto ico = MMC->icons()->getBigIcon(dlg.selectedIconKey);
 		ui->actionChangeInstIcon->setIcon(ico);
 	}
 }
 
 void MainWindow::iconUpdated(QString icon)
 {
-	if(icon == m_currentInstIcon)
+	if (icon == m_currentInstIcon)
 	{
-		ui->actionChangeInstIcon->setIcon(MMC->icons()->getIcon(m_currentInstIcon));
+		ui->actionChangeInstIcon->setIcon(MMC->icons()->getBigIcon(m_currentInstIcon));
 	}
 }
 
 void MainWindow::updateInstanceToolIcon(QString new_icon)
 {
 	m_currentInstIcon = new_icon;
-	ui->actionChangeInstIcon->setIcon(MMC->icons()->getIcon(m_currentInstIcon));
+	ui->actionChangeInstIcon->setIcon(MMC->icons()->getBigIcon(m_currentInstIcon));
+}
+
+void MainWindow::setSelectedInstanceById(const QString &id)
+{
+	if (id.isNull())
+		return;
+	const QModelIndex index = MMC->instances()->getInstanceIndexById(id);
+	if (index.isValid())
+	{
+		QModelIndex selectionIndex = proxymodel->mapFromSource(index);
+		view->selectionModel()->setCurrentIndex(selectionIndex, QItemSelectionModel::ClearAndSelect);
+	}
 }
 
 void MainWindow::on_actionChangeInstGroup_triggered()
@@ -835,28 +950,62 @@ void MainWindow::on_actionConfig_Folder_triggered()
 void MainWindow::on_actionCheckUpdate_triggered()
 {
 	auto updater = MMC->updateChecker();
-
 	updater->checkForUpdate(true);
+}
+
+template <typename T>
+void ShowPageDialog(T raw_provider, QWidget * parent, QString open_page = QString())
+{
+	auto provider = std::dynamic_pointer_cast<BasePageProvider>(raw_provider);
+	if(!provider)
+		return;
+	PageDialog dlg(provider, open_page, parent);
+	dlg.exec();
 }
 
 void MainWindow::on_actionSettings_triggered()
 {
-	SettingsDialog dialog(this);
-	dialog.exec();
+	ShowPageDialog(m_globalSettingsProvider, this, "global-settings");
 	// FIXME: quick HACK to make this work. improve, optimize.
 	proxymodel->invalidate();
 	proxymodel->sort(0);
+	updateToolsMenu();
 }
+
+void MainWindow::on_actionInstanceSettings_triggered()
+{
+	ShowPageDialog(m_selectedInstance, this, "settings");
+}
+
+void MainWindow::on_actionEditInstNotes_triggered()
+{
+	ShowPageDialog(m_selectedInstance, this, "notes");
+}
+
+void MainWindow::on_actionEditInstance_triggered()
+{
+	ShowPageDialog(m_selectedInstance, this);
+}
+
+void MainWindow::on_actionScreenshots_triggered()
+{
+	ShowPageDialog(m_selectedInstance, this, "screenshots");
+}
+
 
 void MainWindow::on_actionManageAccounts_triggered()
 {
-	AccountListDialog dialog(this);
-	dialog.exec();
+	ShowPageDialog(m_globalSettingsProvider, this, "accounts");
 }
 
 void MainWindow::on_actionReportBug_triggered()
 {
-	openWebPage(QUrl("http://multimc.myjetbrains.com/youtrack/dashboard#newissue=yes"));
+	openWebPage(QUrl("https://github.com/MultiMC/MultiMC5/issues"));
+}
+
+void MainWindow::on_actionPatreon_triggered()
+{
+	openWebPage(QUrl("http://www.patreon.com/multimc"));
 }
 
 void MainWindow::on_actionMoreNews_triggered()
@@ -931,17 +1080,6 @@ void MainWindow::on_actionViewSelectedInstFolder_triggered()
 	}
 }
 
-void MainWindow::on_actionEditInstMods_triggered()
-{
-	if (m_selectedInstance)
-	{
-		auto dialog = m_selectedInstance->createModEditDialog(this);
-		if (dialog)
-			dialog->exec();
-		dialog->deleteLater();
-	}
-}
-
 void MainWindow::closeEvent(QCloseEvent *event)
 {
 	// Save the window state and geometry.
@@ -967,9 +1105,10 @@ void MainWindow::instanceActivated(QModelIndex index)
 {
 	if (!index.isValid())
 		return;
-
-	BaseInstance *inst =
-		(BaseInstance *)index.data(InstanceList::InstancePointerRole).value<void *>();
+	QString id = index.data(InstanceList::InstanceIDRole).toString();
+	InstancePtr inst = MMC->instances()->getInstanceById(id);
+	if (!inst)
+		return;
 
 	NagUtils::checkJVMArgs(inst->settings().get("JvmArgs").toString(), this);
 
@@ -985,7 +1124,16 @@ void MainWindow::on_actionLaunchInstance_triggered()
 	}
 }
 
-void MainWindow::doLaunch()
+void MainWindow::on_actionLaunchInstanceOffline_triggered()
+{
+	if (m_selectedInstance)
+	{
+		NagUtils::checkJVMArgs(m_selectedInstance->settings().get("JvmArgs").toString(), this);
+		doLaunch(false);
+	}
+}
+
+void MainWindow::doLaunch(bool online, BaseProfilerFactory *profiler)
 {
 	if (!m_selectedInstance)
 		return;
@@ -1029,99 +1177,181 @@ void MainWindow::doLaunch()
 	if (!account.get())
 		return;
 
+	// we try empty password first :)
+	QString password;
+	// we loop until the user succeeds in logging in or gives up
+	bool tryagain = true;
+	// the failure. the default failure.
 	QString failReason = tr("Your account is currently not logged in. Please enter "
 							"your password to log in again.");
-	// do the login. if the account has an access token, try to refresh it first.
-	if (account->accountStatus() != NotVerified)
-	{
-		// We'll need to validate the access token to make sure the account is still logged in.
-		ProgressDialog progDialog(this);
-		progDialog.setSkipButton(true, tr("Play Offline"));
-		auto task = account->login();
-		progDialog.exec(task.get());
 
-		auto status = account->accountStatus();
-		if (status != NotVerified)
+	while (tryagain)
+	{
+		AuthSessionPtr session(new AuthSession());
+		session->wants_online = online;
+		auto task = account->login(session, password);
+		if (task)
 		{
-			updateInstance(m_selectedInstance, account);
-		}
-		else
-		{
+			// We'll need to validate the access token to make sure the account
+			// is still logged in.
+			ProgressDialog progDialog(this);
+			if (online)
+				progDialog.setSkipButton(true, tr("Play Offline"));
+			progDialog.exec(task.get());
 			if (!task->successful())
 			{
 				failReason = task->failReason();
 			}
-			if (loginWithPassword(account, failReason))
-				updateInstance(m_selectedInstance, account);
 		}
-		// in any case, revert from online to verified.
-		account->downgrade();
-	}
-	else
-	{
-		if (loginWithPassword(account, failReason))
+		switch (session->status)
 		{
-			updateInstance(m_selectedInstance, account);
-			account->downgrade();
+		case AuthSession::Undetermined:
+		{
+			QLOG_ERROR() << "Received undetermined session status during login. Bye.";
+			tryagain = false;
+			break;
 		}
-		// in any case, revert from online to verified.
-		account->downgrade();
+		case AuthSession::RequiresPassword:
+		{
+			EditAccountDialog passDialog(failReason, this, EditAccountDialog::PasswordField);
+			if (passDialog.exec() == QDialog::Accepted)
+			{
+				password = passDialog.password();
+			}
+			else
+			{
+				tryagain = false;
+			}
+			break;
+		}
+		case AuthSession::PlayableOffline:
+		{
+			// we ask the user for a player name
+			bool ok = false;
+			QString usedname = session->player_name;
+			QString name = QInputDialog::getText(this, tr("Player name"),
+												 tr("Choose your offline mode player name."),
+												 QLineEdit::Normal, session->player_name, &ok);
+			if (!ok)
+			{
+				tryagain = false;
+				break;
+			}
+			if (name.length())
+			{
+				usedname = name;
+			}
+			session->MakeOffline(usedname);
+			// offline flavored game from here :3
+		}
+		case AuthSession::PlayableOnline:
+		{
+			// update first if the server actually responded
+			if (session->auth_server_online)
+			{
+				updateInstance(m_selectedInstance, session, profiler);
+			}
+			else
+			{
+				launchInstance(m_selectedInstance, session, profiler);
+			}
+			tryagain = false;
+		}
+		}
 	}
 }
 
-bool MainWindow::loginWithPassword(MojangAccountPtr account, const QString &errorMsg)
+void MainWindow::updateInstance(InstancePtr instance, AuthSessionPtr session,
+								BaseProfilerFactory *profiler)
 {
-	EditAccountDialog passDialog(errorMsg, this, EditAccountDialog::PasswordField);
-	if (passDialog.exec() == QDialog::Accepted)
-	{
-		// To refresh the token, we just create an authenticate task with the given account and
-		// the user's password.
-		ProgressDialog progDialog(this);
-		auto task = account->login(passDialog.password());
-		progDialog.exec(task.get());
-		if (task->successful())
-			return true;
-		else
-		{
-			// If the authentication task failed, recurse with the task's error message.
-			return loginWithPassword(account, task->failReason());
-		}
-	}
-	return false;
-}
-
-void MainWindow::updateInstance(BaseInstance *instance, MojangAccountPtr account)
-{
-	bool only_prepare = account->accountStatus() != Online;
-	auto updateTask = instance->doUpdate(only_prepare);
+	auto updateTask = instance->doUpdate();
 	if (!updateTask)
 	{
-		launchInstance(instance, account);
+		launchInstance(instance, session, profiler);
 		return;
 	}
 	ProgressDialog tDialog(this);
-	connect(updateTask.get(), &Task::succeeded, [this, instance, account]
-	{ launchInstance(instance, account); });
+	connect(updateTask.get(), &Task::succeeded, [this, instance, session, profiler]
+	{ launchInstance(instance, session, profiler); });
 	connect(updateTask.get(), SIGNAL(failed(QString)), SLOT(onGameUpdateError(QString)));
 	tDialog.exec(updateTask.get());
 }
 
-void MainWindow::launchInstance(BaseInstance *instance, MojangAccountPtr account)
+void MainWindow::launchInstance(InstancePtr instance, AuthSessionPtr session,
+								BaseProfilerFactory *profiler)
 {
 	Q_ASSERT_X(instance != NULL, "launchInstance", "instance is NULL");
-	Q_ASSERT_X(account.get() != nullptr, "launchInstance", "account is NULL");
+	Q_ASSERT_X(session.get() != nullptr, "launchInstance", "session is NULL");
 
-	proc = instance->prepareForLaunch(account);
-	if (!proc)
+	QString launchScript;
+
+	if (!instance->prepareForLaunch(session, launchScript))
 		return;
+
+	MinecraftProcess *proc = new MinecraftProcess(instance);
+	proc->setLaunchScript(launchScript);
+	proc->setWorkdir(instance->minecraftRoot());
 
 	this->hide();
 
 	console = new ConsoleWindow(proc);
 	connect(console, SIGNAL(isClosing()), this, SLOT(instanceEnded()));
 
-	proc->setLogin(account);
-	proc->launch();
+	proc->setLogin(session);
+	proc->arm();
+
+	if (profiler)
+	{
+		QString error;
+		if (!profiler->check(&error))
+		{
+			QMessageBox::critical(this, tr("Error"),
+								  tr("Couldn't start profiler: %1").arg(error));
+			proc->abort();
+			return;
+		}
+		BaseProfiler *profilerInstance = profiler->createProfiler(instance, this);
+		QProgressDialog dialog;
+		dialog.setMinimum(0);
+		dialog.setMaximum(0);
+		dialog.setValue(0);
+		dialog.setLabelText(tr("Waiting for profiler..."));
+		connect(&dialog, &QProgressDialog::canceled, profilerInstance,
+				&BaseProfiler::abortProfiling);
+		dialog.show();
+		connect(profilerInstance, &BaseProfiler::readyToLaunch,
+				[&dialog, this, proc](const QString & message)
+		{
+			dialog.accept();
+			QMessageBox msg;
+			msg.setText(tr("The launch of Minecraft itself is delayed until you press the "
+						   "button. This is the right time to setup the profiler, as the "
+						   "profiler server is running now.\n\n%1").arg(message));
+			msg.setWindowTitle(tr("Waiting"));
+			msg.setIcon(QMessageBox::Information);
+			msg.addButton(tr("Launch"), QMessageBox::AcceptRole);
+			msg.exec();
+			proc->launch();
+		});
+		connect(profilerInstance, &BaseProfiler::abortLaunch,
+				[&dialog, this, proc](const QString & message)
+		{
+			dialog.accept();
+			QMessageBox msg;
+			msg.setText(tr("Couldn't start the profiler: %1").arg(message));
+			msg.setWindowTitle(tr("Error"));
+			msg.setIcon(QMessageBox::Critical);
+			msg.addButton(QMessageBox::Ok);
+			msg.exec();
+			proc->abort();
+		});
+		profilerInstance->beginProfiling(proc);
+		dialog.exec();
+	}
+	else
+	{
+		proc->launch();
+	}
 }
 
 void MainWindow::onGameUpdateError(QString error)
@@ -1152,149 +1382,53 @@ void MainWindow::startTask(Task *task)
 	task->start();
 }
 
-// Create A Desktop Shortcut
-void MainWindow::on_actionMakeDesktopShortcut_triggered()
-{
-	QString name("Test");
-	name = QInputDialog::getText(this, tr("MultiMC Shortcut"), tr("Enter a Shortcut Name."),
-								 QLineEdit::Normal, name);
-
-	Util::createShortCut(Util::getDesktopDir(), QApplication::instance()->applicationFilePath(),
-						 QStringList() << "-dl" << QDir::currentPath() << "test", name,
-						 "application-x-octet-stream");
-
-	CustomMessageBox::selectable(
-		this, tr("Not useful"),
-		tr("A Dummy Shortcut was created. it will not do anything productive"),
-		QMessageBox::Warning)->show();
-}
-
 // BrowserDialog
 void MainWindow::openWebPage(QUrl url)
 {
 	QDesktopServices::openUrl(url);
 }
 
-void MainWindow::on_actionChangeInstMCVersion_triggered()
-{
-	if (view->selectionModel()->selectedIndexes().count() < 1)
-		return;
-
-	VersionSelectDialog vselect(m_selectedInstance->versionList().get(),
-								tr("Change Minecraft version"), this);
-	vselect.setFilter(1, "OneSix");
-	if(!vselect.exec() || !vselect.selectedVersion())
-		return;
-
-	if (!MMC->accounts()->anyAccountIsValid())
-	{
-		CustomMessageBox::selectable(
-			this, tr("Error"),
-			tr("MultiMC cannot download Minecraft or update instances unless you have at least "
-			   "one account added.\nPlease add your Mojang or Minecraft account."),
-			QMessageBox::Warning)->show();
-		return;
-	}
-
-	if (m_selectedInstance->versionIsCustom())
-	{
-		auto result = CustomMessageBox::selectable(
-			this, tr("Are you sure?"),
-			tr("This will remove any library/version customization you did previously. "
-				"This includes things like Forge install and similar."),
-			QMessageBox::Warning, QMessageBox::Ok | QMessageBox::Abort,
-			QMessageBox::Abort)->exec();
-
-		if (result != QMessageBox::Ok)
-			return;
-	}
-	m_selectedInstance->setIntendedVersionId(vselect.selectedVersion()->descriptor());
-
-	auto updateTask = m_selectedInstance->doUpdate(false);
-	if (!updateTask)
-	{
-		return;
-	}
-	ProgressDialog tDialog(this);
-	connect(updateTask.get(), SIGNAL(failed(QString)), SLOT(onGameUpdateError(QString)));
-	tDialog.exec(updateTask.get());
-}
-
-void MainWindow::on_actionChangeInstLWJGLVersion_triggered()
-{
-	if (!m_selectedInstance)
-		return;
-
-	LWJGLSelectDialog lselect(this);
-	lselect.exec();
-	if (lselect.result() == QDialog::Accepted)
-	{
-		LegacyInstance *linst = (LegacyInstance *)m_selectedInstance;
-		linst->setLWJGLVersion(lselect.selectedVersion());
-	}
-}
-
-void MainWindow::on_actionInstanceSettings_triggered()
-{
-	if (view->selectionModel()->selectedIndexes().count() < 1)
-		return;
-
-	InstanceSettings settings(&m_selectedInstance->settings(), this);
-	settings.setWindowTitle(tr("Instance settings"));
-	settings.exec();
-}
-
 void MainWindow::instanceChanged(const QModelIndex &current, const QModelIndex &previous)
 {
-	if (current.isValid() &&
-		nullptr != (m_selectedInstance =
-						(BaseInstance *)current.data(InstanceList::InstancePointerRole)
-							.value<void *>()))
+	if(!current.isValid())
 	{
-		ui->instanceToolBar->setEnabled(true);
+		MMC->settings()->set("SelectedInstance", QString());
+		selectionBad();
+		return;
+	}
+	QString id = current.data(InstanceList::InstanceIDRole).toString();
+	m_selectedInstance = MMC->instances()->getInstanceById(id);
+	if ( m_selectedInstance )
+	{
+		ui->instanceToolBar->setEnabled(m_selectedInstance->canLaunch());
 		renameButton->setText(m_selectedInstance->name());
-		ui->actionChangeInstLWJGLVersion->setEnabled(
-			m_selectedInstance->menuActionEnabled("actionChangeInstLWJGLVersion"));
-		ui->actionEditInstMods->setEnabled(
-			m_selectedInstance->menuActionEnabled("actionEditInstMods"));
-		ui->actionChangeInstMCVersion->setEnabled(
-			m_selectedInstance->menuActionEnabled("actionChangeInstMCVersion"));
 		m_statusLeft->setText(m_selectedInstance->getStatusbarDescription());
 		updateInstanceToolIcon(m_selectedInstance->iconKey());
+
+		updateToolsMenu();
 
 		MMC->settings()->set("SelectedInstance", m_selectedInstance->id());
 	}
 	else
 	{
-		selectionBad();
-
 		MMC->settings()->set("SelectedInstance", QString());
+		selectionBad();
+		return;
 	}
 }
 
 void MainWindow::selectionBad()
 {
+	// start by reseting everything...
 	m_selectedInstance = nullptr;
 
 	statusBar()->clearMessage();
 	ui->instanceToolBar->setEnabled(false);
 	renameButton->setText(tr("Rename Instance"));
 	updateInstanceToolIcon("infinity");
-}
 
-void MainWindow::on_actionEditInstNotes_triggered()
-{
-	if (!m_selectedInstance)
-		return;
-	LegacyInstance *linst = (LegacyInstance *)m_selectedInstance;
-
-	EditNotesDialog noteedit(linst->notes(), linst->name(), this);
-	noteedit.exec();
-	if (noteedit.result() == QDialog::Accepted)
-	{
-
-		linst->setNotes(noteedit.getText());
-	}
+	// ...and then see if we can enable the previously selected instance
+	setSelectedInstanceById(MMC->settings()->get("SelectedInstance").toString());
 }
 
 void MainWindow::instanceEnded()
@@ -1305,7 +1439,7 @@ void MainWindow::instanceEnded()
 void MainWindow::checkMigrateLegacyAssets()
 {
 	int legacyAssets = AssetsUtils::findLegacyAssets();
-	if(legacyAssets > 0)
+	if (legacyAssets > 0)
 	{
 		ProgressDialog migrateDlg(this);
 		AssetsMigrateTask migrateTask(legacyAssets, &migrateDlg);
@@ -1330,7 +1464,9 @@ void MainWindow::checkMigrateLegacyAssets()
 
 void MainWindow::checkSetDefaultJava()
 {
+	const QString javaHack = "IntelHack";
 	bool askForJava = false;
+	do
 	{
 		QString currentHostName = QHostInfo::localHostName();
 		QString oldHostName = MMC->settings()->get("LastHostname").toString();
@@ -1338,16 +1474,30 @@ void MainWindow::checkSetDefaultJava()
 		{
 			MMC->settings()->set("LastHostname", currentHostName);
 			askForJava = true;
+			break;
 		}
-	}
-
-	{
 		QString currentJavaPath = MMC->settings()->get("JavaPath").toString();
 		if (currentJavaPath.isEmpty())
 		{
 			askForJava = true;
+			break;
 		}
-	}
+		#if defined Q_OS_WIN32
+		QString currentHack = MMC->settings()->get("JavaDetectionHack").toString();
+		if (currentHack != javaHack)
+		{
+			CustomMessageBox::selectable(
+				this, tr("Java detection forced"),
+				tr("Because of graphics performance issues caused by Intel drivers on Windows, "
+				   "MultiMC java detection was forced. Please select a Java "
+				   "version.<br/><br/>If you have custom java versions set for your instances, "
+				   "make sure you use the 'javaw.exe' executable."),
+				QMessageBox::Warning)->exec();
+			askForJava = true;
+			break;
+		}
+		#endif
+	} while (0);
 
 	if (askForJava)
 	{
@@ -1375,8 +1525,29 @@ void MainWindow::checkSetDefaultJava()
 			java = ju.GetDefaultJava();
 		}
 		if (java)
+		{
 			MMC->settings()->set("JavaPath", java->path);
+			MMC->settings()->set("JavaDetectionHack", javaHack);
+		}
 		else
 			MMC->settings()->set("JavaPath", QString("java"));
+	}
+}
+
+void MainWindow::checkInstancePathForProblems()
+{
+	QString instanceFolder = MMC->settings()->get("InstanceDir").toString();
+	if (checkProblemticPathJava(QDir(instanceFolder)))
+	{
+		QMessageBox warning;
+		warning.setText(tr(
+			"Your instance folder contains \'!\' and this is known to cause Java problems!"));
+		warning.setInformativeText(
+			tr("You have now three options: <br/>"
+			   " - ignore this warning <br/>"
+			   " - change the instance dir in the settings <br/>"
+			   " - move this installation of MultiMC5 to a different folder"));
+		warning.setDefaultButton(QMessageBox::Ok);
+		warning.exec();
 	}
 }

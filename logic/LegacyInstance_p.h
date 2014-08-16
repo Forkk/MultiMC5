@@ -15,14 +15,16 @@
 
 #pragma once
 #include <QString>
-#include <settingsobject.h>
+#include "logic/settings/SettingsObject.h"
 #include <memory>
 
 #include "BaseInstance_p.h"
 #include "ModList.h"
 
-struct LegacyInstancePrivate : public BaseInstancePrivate
+class LegacyInstancePrivate : public BaseInstancePrivate
 {
+public:
+	virtual ~LegacyInstancePrivate() {};
 	std::shared_ptr<ModList> jar_mod_list;
 	std::shared_ptr<ModList> core_mod_list;
 	std::shared_ptr<ModList> loader_mod_list;

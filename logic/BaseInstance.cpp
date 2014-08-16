@@ -21,12 +21,13 @@
 #include <QDir>
 #include "MultiMC.h"
 
-#include "inisettingsobject.h"
-#include "setting.h"
-#include "overridesetting.h"
+#include "logic/settings/INISettingsObject.h"
+#include "logic/settings/Setting.h"
+#include "logic/settings/OverrideSetting.h"
 
 #include "pathutils.h"
-#include "lists/MinecraftVersionList.h"
+#include <cmdutils.h>
+#include "logic/minecraft/MinecraftVersionList.h"
 #include "logic/icons/IconList.h"
 
 BaseInstance::BaseInstance(BaseInstancePrivate *d_in, const QString &rootDir,
@@ -34,7 +35,7 @@ BaseInstance::BaseInstance(BaseInstancePrivate *d_in, const QString &rootDir,
 	: QObject(parent), inst_d(d_in)
 {
 	I_D(BaseInstance);
-	d->m_settings = settings_obj;
+	d->m_settings = std::shared_ptr<SettingsObject>(settings_obj);
 	d->m_rootDir = rootDir;
 
 	settings().registerSetting("name", "Unnamed Instance");
@@ -57,6 +58,8 @@ BaseInstance::BaseInstance(BaseInstancePrivate *d_in, const QString &rootDir,
 
 	// Java Settings
 	settings().registerSetting("OverrideJava", false);
+	settings().registerSetting("OverrideJavaLocation", false);
+	settings().registerSetting("OverrideJavaArgs", false);
 	settings().registerOverride(globalSettings->getSetting("JavaPath"));
 	settings().registerOverride(globalSettings->getSetting("JvmArgs"));
 
@@ -81,6 +84,7 @@ BaseInstance::BaseInstance(BaseInstancePrivate *d_in, const QString &rootDir,
 	settings().registerSetting("OverrideConsole", false);
 	settings().registerOverride(globalSettings->getSetting("ShowConsole"));
 	settings().registerOverride(globalSettings->getSetting("AutoCloseConsole"));
+	settings().registerOverride(globalSettings->getSetting("LogPrePostOutput"));
 }
 
 void BaseInstance::iconUpdated(QString key)
@@ -100,6 +104,18 @@ void BaseInstance::nuke()
 QString BaseInstance::id() const
 {
 	return QFileInfo(instanceRoot()).fileName();
+}
+
+bool BaseInstance::isRunning() const
+{
+	I_D(BaseInstance);
+	return d->m_isRunning;
+}
+
+void BaseInstance::setRunning(bool running) const
+{
+	I_D(BaseInstance);
+	d->m_isRunning = running;
 }
 
 QString BaseInstance::instanceType() const
@@ -142,6 +158,33 @@ SettingsObject &BaseInstance::settings() const
 {
 	I_D(BaseInstance);
 	return *d->m_settings;
+}
+
+QSet<BaseInstance::InstanceFlag> BaseInstance::flags() const
+{
+	I_D(const BaseInstance);
+	return QSet<InstanceFlag>(d->m_flags);
+}
+
+void BaseInstance::setFlags(const QSet<InstanceFlag> &flags)
+{
+	I_D(BaseInstance);
+	if (flags != d->m_flags)
+	{
+		d->m_flags = flags;
+		emit flagsChanged();
+		emit propertiesChanged(this);
+	}
+}
+
+bool BaseInstance::canLaunch() const
+{
+	return !flags().contains(VersionBrokenFlag);
+}
+
+bool BaseInstance::reload()
+{
+	return settings().reload();
 }
 
 QString BaseInstance::baseJar() const
@@ -248,8 +291,19 @@ void BaseInstance::setName(QString val)
 	d->m_settings->set("name", val);
 	emit propertiesChanged(this);
 }
+
 QString BaseInstance::name() const
 {
 	I_D(BaseInstance);
 	return d->m_settings->get("name").toString();
+}
+
+QString BaseInstance::windowTitle() const
+{
+	return "MultiMC: " + name();
+}
+
+QStringList BaseInstance::extraArguments() const
+{
+	return Util::Commandline::splitArgs(settings().get("JvmArgs").toString());
 }

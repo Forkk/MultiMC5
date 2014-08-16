@@ -16,6 +16,8 @@
 #pragma once
 
 #include <memory>
+#include <QString>
+#include <QMetaType>
 
 /*!
  * An abstract base class for versions.
@@ -39,6 +41,15 @@ struct BaseVersion
 	 * the kind of version this is (Stable, Beta, Snapshot, whatever)
 	 */
 	virtual QString typeString() const = 0;
+
+	virtual bool operator<(BaseVersion &a)
+	{
+		return name() < a.name();
+	};
+	virtual bool operator>(BaseVersion &a)
+	{
+		return name() > a.name();
+	};
 };
 
 typedef std::shared_ptr<BaseVersion> BaseVersionPtr;

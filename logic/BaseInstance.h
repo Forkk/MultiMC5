@@ -17,14 +17,17 @@
 
 #include <QObject>
 #include <QDateTime>
+#include <QSet>
 
-#include <settingsobject.h>
+#include "logic/settings/SettingsObject.h"
 
-#include "inifile.h"
-#include "lists/BaseVersionList.h"
+#include "logic/settings/INIFile.h"
+#include "logic/BaseVersionList.h"
 #include "logic/auth/MojangAccount.h"
 
+class ModList;
 class QDialog;
+class QDir;
 class Task;
 class MinecraftProcess;
 class OneSixUpdate;
@@ -51,13 +54,19 @@ public:
 	/// virtual destructor to make sure the destruction is COMPLETE
 	virtual ~BaseInstance() {};
 
+	virtual void init() {}
+	virtual void copy(const QDir &newDir) {}
+
 	/// nuke thoroughly - deletes the instance contents, notifies the list/model which is
 	/// responsible of cleaning up the husk
 	void nuke();
 
 	/// The instance's ID. The ID SHALL be determined by MMC internally. The ID IS guaranteed to
 	/// be unique.
-	QString id() const;
+	virtual QString id() const;
+
+	virtual void setRunning(bool running) const;
+	virtual bool isRunning() const;
 
 	/// get the type of this instance
 	QString instanceType() const;
@@ -71,6 +80,9 @@ public:
 	QString name() const;
 	void setName(QString val);
 
+	/// Value used for instance window titles
+	QString windowTitle() const;
+
 	QString iconKey() const;
 	void setIconKey(QString val);
 
@@ -80,6 +92,8 @@ public:
 	QString group() const;
 	void setGroupInitial(QString val);
 	void setGroupPost(QString val);
+
+	virtual QStringList extraArguments() const;
 
 	virtual QString intendedVersionId() const = 0;
 	virtual bool setIntendedVersionId(QString version) = 0;
@@ -99,6 +113,19 @@ public:
 	 */
 	virtual bool shouldUpdate() const = 0;
 	virtual void setShouldUpdate(bool val) = 0;
+
+	//////  Mod Lists  //////
+	virtual std::shared_ptr<ModList> resourcePackList()
+	{
+		return nullptr;
+	}
+	virtual std::shared_ptr<ModList> texturePackList()
+	{
+		return nullptr;
+	}
+	
+	/// Traits. Normally inside the version, depends on instance implementation.
+	virtual QSet <QString> traits() = 0;
 
 	/// Get the curent base jar of this instance. By default, it's the
 	/// versions/$version/$version.jar
@@ -150,25 +177,31 @@ public:
 	virtual SettingsObject &settings() const;
 
 	/// returns a valid update task
-	virtual std::shared_ptr<Task> doUpdate(bool only_prepare) = 0;
+	virtual std::shared_ptr<Task> doUpdate() = 0;
 
 	/// returns a valid minecraft process, ready for launch with the given account.
-	virtual MinecraftProcess *prepareForLaunch(MojangAccountPtr account) = 0;
+	virtual bool prepareForLaunch(AuthSessionPtr account, QString & launchScript) = 0;
 
 	/// do any necessary cleanups after the instance finishes. also runs before
 	/// 'prepareForLaunch'
 	virtual void cleanupAfterRun() = 0;
 
-	/// create a mod edit dialog for the instance
-	virtual QDialog *createModEditDialog(QWidget *parent) = 0;
-
-	/// is a particular action enabled with this instance selected?
-	virtual bool menuActionEnabled(QString action_name) const = 0;
-
 	virtual QString getStatusbarDescription() = 0;
 
 	/// FIXME: this really should be elsewhere...
 	virtual QString instanceConfigFolder() const = 0;
+
+	enum InstanceFlag
+	{
+		NoFlags = 0x00,
+		VersionBrokenFlag = 0x01
+	};
+	QSet<InstanceFlag> flags() const;
+	void setFlags(const QSet<InstanceFlag> &flags);
+
+	bool canLaunch() const;
+
+	virtual bool reload();
 
 signals:
 	/*!
@@ -184,6 +217,8 @@ signals:
 	 */
 	void nuked(BaseInstance *inst);
 
+	void flagsChanged();
+
 protected slots:
 	void iconUpdated(QString key);
 
@@ -193,3 +228,5 @@ protected:
 
 // pointer for lazy people
 typedef std::shared_ptr<BaseInstance> InstancePtr;
+
+Q_DECLARE_METATYPE(BaseInstance::InstanceFlag)

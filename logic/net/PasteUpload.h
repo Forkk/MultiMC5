@@ -9,15 +9,25 @@ class PasteUpload : public Task
 	Q_OBJECT
 public:
 	PasteUpload(QWidget *window, QString text);
-
+	virtual ~PasteUpload(){};
+	QString pasteLink()
+	{
+		return m_pasteLink;
+	}
+	QString pasteID()
+	{
+		return m_pasteID;
+	}
 protected:
 	virtual void executeTask();
 
 private:
-	bool parseResult(QJsonDocument doc, QString *parseError);
+	bool parseResult(QJsonDocument doc);
 	QString m_text;
 	QString m_error;
 	QWidget *m_window;
+	QString m_pasteID;
+	QString m_pasteLink;
 	std::shared_ptr<QNetworkReply> m_reply;
 public
 slots:
